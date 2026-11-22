@@ -9,6 +9,7 @@ ConditionPathExists=/dev/tty0
 [Service]
 Type=simple
 User=couchpi
+AmbientCapabilities=
 ExecStart=/opt/couchpi/bin/couchpi-session
 Restart=always
 RestartSec=2

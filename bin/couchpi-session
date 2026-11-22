@@ -60,8 +60,10 @@ while true; do
     if [ -s "$RUN/launch" ]; then
         cmd="$(cat "$RUN/launch")"
         rm -f "$RUN/launch"
-        # apps must not inherit the launcher's SDL driver choice
-        ( unset SDL_VIDEODRIVER COUCHPI_WINDOWED SDL_KMSDRM_DEVICE_INDEX; run_in_cage bash -c "$cmd" )
+        # Apps must not inherit the launcher's SDL driver choice, nor our ambient
+        # capabilities (the service gets CAP_WAKE_ALARM, which makes flatpak's bwrap refuse to run).
+        ( unset SDL_VIDEODRIVER COUCHPI_WINDOWED SDL_KMSDRM_DEVICE_INDEX
+          run_in_cage setpriv --inh-caps=-all --ambient-caps=-all bash -c "$cmd" )
     elif [ "$LAST_RC" -ne 0 ] && [ "$LAST_RC" -ne 143 ]; then
         n=$((n + 1))
         echo "couchpi-session: launcher failed (status $LAST_RC) with $drv; trying the next video driver"
