@@ -1,0 +1,10 @@
+[Unit]
+Description=Run CouchPi automatic updates daily (the Settings schedule decides what runs)
+
+[Timer]
+OnCalendar=*-*-* 04:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

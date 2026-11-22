@@ -1,0 +1,25 @@
+#!/bin/bash
+# Session supervisor: run the launcher in a kiosk compositor; when it exits
+# having picked an app, run that app in its own compositor, then loop back.
+RUN="${COUCHPI_RUN:-/run/couchpi}"
+LAUNCHER="${COUCHPI_LAUNCHER:-/opt/couchpi/launcher/launcher.py}"
+mkdir -p "$RUN"
+export SDL_VIDEODRIVER=wayland
+
+run_in_cage() {
+    cage -s -d -- "$@" &
+    echo $! > "$RUN/app.pid"
+    wait $!
+}
+
+while true; do
+    rm -f "$RUN/launch"
+    run_in_cage python3 "$LAUNCHER"
+    if [ -s "$RUN/launch" ]; then
+        cmd="$(cat "$RUN/launch")"
+        rm -f "$RUN/launch"
+        run_in_cage bash -c "$cmd"
+    else
+        sleep 1   # launcher was killed (Home/sleep) or crashed: don't spin
+    fi
+done

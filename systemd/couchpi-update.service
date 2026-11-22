@@ -1,0 +1,8 @@
+[Unit]
+Description=CouchPi automatic updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/couchpi/bin/couchpi-update auto

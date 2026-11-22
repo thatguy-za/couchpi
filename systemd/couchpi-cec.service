@@ -1,0 +1,12 @@
+[Unit]
+Description=CouchPi HDMI-CEC remote and TV sleep daemon
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/couchpi/cec/cecd.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

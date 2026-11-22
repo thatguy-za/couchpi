@@ -1,0 +1,15 @@
+#!/bin/bash
+# Set (or clear) the HDMI mode on the kernel command line. Needs root; takes
+# effect after reboot. Usage: apply-display auto | WxH@Hz
+set -euo pipefail
+val="${1:-auto}"
+if [[ "$val" != "auto" && ! "$val" =~ ^[0-9]{3,4}x[0-9]{3,4}@[0-9]{2,3}$ ]]; then
+    echo "invalid mode: $val" >&2
+    exit 1
+fi
+f=/boot/firmware/cmdline.txt
+[ -f "$f" ] || f=/boot/cmdline.txt
+sed -i -E 's/ ?video=HDMI-A-1:[^ ]*//g' "$f"
+if [ "$val" != "auto" ]; then
+    sed -i -E "1s/\$/ video=HDMI-A-1:${val}/" "$f"
+fi

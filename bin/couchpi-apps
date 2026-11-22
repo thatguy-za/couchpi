@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Manage CouchPi apps.
+
+  couchpi-apps list                 show known apps
+  couchpi-apps install <id>|--all   install an app's dependencies (apt/flatpak)
+  couchpi-apps add <file.toml>      add a new app definition (and install it)
+"""
+import glob
+import os
+import shutil
+import subprocess
+import sys
+import tomllib
+
+APPS_DIR = os.environ.get("COUCHPI_APPS", "/opt/couchpi/apps.d")
+
+
+def load(path):
+    with open(path, "rb") as f:
+        return tomllib.load(f)
+
+
+def install(path):
+    app = load(path)
+    inst = app.get("install", {})
+    print(f"==> {app['name']}")
+    if inst.get("apt"):
+        subprocess.run(["apt-get", "install", "-y", *inst["apt"]], check=True)
+    if inst.get("flatpak"):
+        subprocess.run(["flatpak", "remote-add", "--if-not-exists", "flathub",
+                        "https://dl.flathub.org/repo/flathub.flatpakrepo"], check=True)
+        subprocess.run(["flatpak", "install", "-y", "flathub", inst["flatpak"]], check=True)
+
+
+def main(argv):
+    files = {os.path.splitext(os.path.basename(p))[0]: p
+             for p in sorted(glob.glob(os.path.join(APPS_DIR, "*.toml")))}
+    cmd = argv[1] if len(argv) > 1 else "list"
+    if cmd == "list":
+        for key, p in files.items():
+            print(f"{key:15} {load(p)['name']}")
+    elif cmd == "install" and len(argv) > 2:
+        targets = list(files.values()) if argv[2] == "--all" else [files.get(argv[2])]
+        if None in targets:
+            sys.exit(f"unknown app: {argv[2]} (try: couchpi-apps list)")
+        for p in targets:
+            install(p)
+    elif cmd == "add" and len(argv) > 2:
+        load(argv[2])  # validate it parses
+        dest = os.path.join(APPS_DIR, os.path.basename(argv[2]))
+        shutil.copy(argv[2], dest)
+        install(dest)
+        print("Added. It will appear in the launcher next time it starts.")
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

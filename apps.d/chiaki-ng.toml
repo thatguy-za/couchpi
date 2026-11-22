@@ -1,0 +1,10 @@
+name = "Chiaki-ng"
+description = "PlayStation Remote Play"
+color = "#1d4ed8"
+order = 20
+glyph = "gamepad"
+command = "flatpak run io.github.streetpea.Chiaki4deck"
+
+[install]
+apt = ["flatpak"]
+flatpak = "io.github.streetpea.Chiaki4deck"

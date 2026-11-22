@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Privileged system helper for the CouchPi settings screen (run via sudo).
+
+  couchpi-sys wifi-list                    JSON list of nearby networks
+  couchpi-sys wifi-connect <ssid>          password on stdin (empty for open networks)
+  couchpi-sys set-hostname <name>
+Always prints one JSON document on stdout.
+"""
+import json
+import re
+import subprocess
+import sys
+
+
+def split_nm(line):
+    """Split an `nmcli -t` line on unescaped colons."""
+    parts = re.split(r"(?<!\\):", line)
+    return [p.replace("\\:", ":").replace("\\\\", "\\") for p in parts]
+
+
+def wifi_list():
+    out = subprocess.run(
+        ["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "yes"],
+        capture_output=True, text=True, timeout=45).stdout
+    best = {}
+    for line in out.splitlines():
+        f = split_nm(line)
+        if len(f) < 4 or not f[1]:
+            continue
+        net = {"ssid": f[1], "signal": int(f[2] or 0), "secure": f[3] not in ("", "--"),
+               "active": f[0].strip() == "*"}
+        old = best.get(net["ssid"])
+        if not old or net["active"] or (not old["active"] and net["signal"] > old["signal"]):
+            best[net["ssid"]] = net
+    return sorted(best.values(), key=lambda n: (not n["active"], -n["signal"]))
+
+
+def wifi_connect(ssid):
+    pw = sys.stdin.read().rstrip("\n")
+    subprocess.run(["nmcli", "connection", "delete", "id", ssid], capture_output=True)
+    cmd = ["nmcli", "dev", "wifi", "connect", ssid] + (["password", pw] if pw else [])
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if r.returncode == 0:
+        return {"ok": True, "msg": f"Connected to {ssid}"}
+    err = (r.stderr or r.stdout).strip().splitlines()
+    return {"ok": False, "msg": err[-1] if err else "Could not connect"}
+
+
+def set_hostname(name):
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?", name):
+        return {"ok": False, "msg": "Use letters, numbers and dashes only"}
+    subprocess.run(["hostnamectl", "set-hostname", name], check=True)
+    subprocess.run(["sed", "-i", "-E", f"s/^127\\.0\\.1\\.1.*/127.0.1.1\\t{name}/", "/etc/hosts"])
+    return {"ok": True, "msg": f"Device name is now {name}"}
+
+
+def main(argv):
+    try:
+        if argv[1:2] == ["wifi-list"]:
+            print(json.dumps(wifi_list()))
+        elif argv[1:2] == ["wifi-connect"] and len(argv) == 3:
+            print(json.dumps(wifi_connect(argv[2])))
+        elif argv[1:2] == ["set-hostname"] and len(argv) == 3:
+            print(json.dumps(set_hostname(argv[2])))
+        else:
+            print(json.dumps({"ok": False, "msg": "bad command"}))
+    except (OSError, subprocess.SubprocessError) as e:
+        print(json.dumps({"ok": False, "msg": str(e)}))
+
+
+if __name__ == "__main__":
+    main(sys.argv)
