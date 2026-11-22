@@ -234,7 +234,9 @@ class Launcher:
         if key not in self.icons:
             try:
                 img = pygame.image.load(os.path.join(item.get("_dir", "."), path)).convert_alpha()
-                self.icons[key] = pygame.transform.smoothscale(img, (size, size))
+                w, h = img.get_size()
+                k = min(size * 1.5 / w, size / h)  # keep aspect; wide logos may be 1.5x wider than tall
+                self.icons[key] = pygame.transform.smoothscale(img, (max(1, int(w * k)), max(1, int(h * k))))
             except (pygame.error, OSError):
                 self.icons[key] = None
         return self.icons[key]
