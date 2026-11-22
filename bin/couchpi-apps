@@ -25,7 +25,7 @@ def install(path):
     inst = app.get("install", {})
     print(f"==> {app['name']}")
     if inst.get("apt"):
-        subprocess.run(["apt-get", "install", "-y", *inst["apt"]], check=True)
+        subprocess.run(["apt-get", "-o", "DPkg::Lock::Timeout=600", "install", "-y", *inst["apt"]], check=True)
     if inst.get("flatpak"):
         subprocess.run(["flatpak", "remote-add", "--if-not-exists", "flathub",
                         "https://dl.flathub.org/repo/flathub.flatpakrepo"], check=True)

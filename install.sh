@@ -16,8 +16,8 @@ UPDATE="${COUCHPI_UPDATE:-0}"
 
 echo "==> Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y cage python3-pygame python3-evdev cec-utils sudo flatpak \
+apt-get -o DPkg::Lock::Timeout=600 update
+apt-get -o DPkg::Lock::Timeout=600 install -y cage python3-pygame python3-evdev cec-utils sudo flatpak \
     unattended-upgrades curl ca-certificates \
     bluez pipewire pipewire-pulse wireplumber libspa-0.2-bluetooth pulseaudio-utils
 command -v nmcli >/dev/null || echo "Note: NetworkManager not found; Wi-Fi settings need it (default on Pi OS Bookworm+)."

@@ -80,7 +80,7 @@ def local_sha():
 
 def check():
     log("Checking for updates...")
-    sh(["apt-get", "update", "-qq"])
+    sh(["apt-get", "-o", "DPkg::Lock::Timeout=600", "update", "-qq"])
     sim = [l for l in sh(["apt-get", "-s", "upgrade"]).stdout.splitlines() if l.startswith("Inst ")]
     status = {
         "checked": int(time.time()),
@@ -105,7 +105,7 @@ def update_os(scope):
         stream(["unattended-upgrade", "-v"])
     else:
         log("Updating the operating system...")
-        stream(["apt-get", "-y", "-o", "Dpkg::Options::=--force-confold", "upgrade"])
+        stream(["apt-get", "-y", "-o", "DPkg::Lock::Timeout=600", "-o", "Dpkg::Options::=--force-confold", "upgrade"])
 
 
 def update_flatpak(key):
