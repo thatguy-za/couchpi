@@ -18,12 +18,15 @@ echo "==> Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y cage python3-pygame python3-evdev cec-utils sudo flatpak \
-    unattended-upgrades curl ca-certificates
+    unattended-upgrades curl ca-certificates \
+    bluez pipewire pipewire-pulse wireplumber libspa-0.2-bluetooth pulseaudio-utils
 command -v nmcli >/dev/null || echo "Note: NetworkManager not found; Wi-Fi settings need it (default on Pi OS Bookworm+)."
 
 echo "==> Creating the 'couchpi' user"
 id couchpi >/dev/null 2>&1 || useradd -m -s /usr/sbin/nologin couchpi
 usermod -aG video,render,input,audio couchpi
+getent group bluetooth >/dev/null && usermod -aG bluetooth couchpi || true
+systemctl enable --now bluetooth.service 2>/dev/null || true
 
 echo "==> Copying files to $DEST"
 mkdir -p "$DEST/apps.d" "$CONF" /var/lib/couchpi

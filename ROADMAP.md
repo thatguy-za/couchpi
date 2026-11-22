@@ -6,9 +6,7 @@ those projects, so treat the priorities as opinions, not user research.
 
 ## High value (things most couch users expect)
 
-1. **Bluetooth pairing** (remotes, controllers, headphones/speakers) in Settings. Almost every
-   comparable box has it, and Chiaki-ng needs a pad.
-2. **Audio output picker** (HDMI, headphones jack, Bluetooth) and a volume setting.
+1. ~~Bluetooth pairing~~ and ~~audio output picker + volume~~: done (PIN-entry pairing still to do).
 3. **App catalogue**: browse and one-click install more apps from the couch (Kodi, Plex HTPC,
    Moonlight, Steam Link, YouTube/Netflix via a browser kiosk, Spotify), not only
    `couchpi-apps add`.

@@ -4,6 +4,8 @@
   couchpi-sys wifi-list                    JSON list of nearby networks
   couchpi-sys wifi-connect <ssid>          password on stdin (empty for open networks)
   couchpi-sys set-hostname <name>
+  couchpi-sys bt-scan                      scan ~8s, JSON list of Bluetooth devices
+  couchpi-sys bt <pair|connect|disconnect|forget> <mac>
 Always prints one JSON document on stdout.
 """
 import json
@@ -54,8 +56,57 @@ def set_hostname(name):
     return {"ok": True, "msg": f"Device name is now {name}"}
 
 
+MAC_RE = re.compile(r"[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}")
+KINDS = {"audio": "Audio", "input-gaming": "Controller", "input-keyboard": "Keyboard",
+         "input-mouse": "Mouse", "input-tablet": "Remote", "phone": "Phone", "computer": "Computer"}
+
+
+def bt(*args, timeout=30):
+    return subprocess.run(["bluetoothctl", *args], capture_output=True, text=True, timeout=timeout).stdout
+
+
+def bt_scan():
+    subprocess.run(["rfkill", "unblock", "bluetooth"], capture_output=True)
+    bt("power", "on")
+    bt("--timeout", "8", "scan", "on", timeout=25)
+    devs = []
+    for line in bt("devices").splitlines():
+        m = re.match(r"Device (\S{17}) (.*)", line)
+        if not m or re.fullmatch(r"([0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}", m.group(2)):
+            continue  # skip nameless devices
+        info = bt("info", m.group(1))
+        icon = re.search(r"Icon: (\S+)", info)
+        kind = next((v for k, v in KINDS.items() if icon and icon.group(1).startswith(k)), "")
+        devs.append({"mac": m.group(1), "name": m.group(2), "kind": kind,
+                     "paired": "Paired: yes" in info, "connected": "Connected: yes" in info})
+    return sorted(devs, key=lambda d: (not d["connected"], not d["paired"], d["name"].lower()))
+
+
+def bt_action(action, mac):
+    if not MAC_RE.fullmatch(mac):
+        return {"ok": False, "msg": "bad address"}
+    if action == "forget":
+        bt("remove", mac)
+        return {"ok": True, "msg": "Device forgotten"}
+    if action == "disconnect":
+        bt("disconnect", mac)
+        return {"ok": True, "msg": "Disconnected"}
+    if action == "pair":
+        bt("--timeout", "30", "pair", mac, timeout=45)
+        bt("trust", mac)
+    out = bt("connect", mac, timeout=40)
+    ok = "Connection successful" in out
+    return {"ok": ok, "msg": "Connected" if ok else "Could not connect (is the device in pairing mode?)"}
+
+
 def main(argv):
     try:
+        if argv[1:2] == ["bt-scan"]:
+            print(json.dumps(bt_scan()))
+            return
+        if argv[1:2] == ["bt"] and len(argv) == 4 and argv[2] in ("pair", "connect", "disconnect", "forget"):
+            print(json.dumps(bt_action(argv[2], argv[3])))
+            return
         if argv[1:2] == ["wifi-list"]:
             print(json.dumps(wifi_list()))
         elif argv[1:2] == ["wifi-connect"] and len(argv) == 3:

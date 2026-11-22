@@ -111,6 +111,30 @@ def root(script, *args, stdin=None, timeout=60):
                           text=True, timeout=timeout, check=True).stdout
 
 
+def audio_state():
+    """Output devices + default + volume, via pactl (PipeWire/PulseAudio)."""
+    if DEV:
+        return {"default": "hdmi", "vol": 65, "sinks": [
+            {"name": "hdmi", "desc": "HDMI / DisplayPort"}, {"name": "analog", "desc": "Headphones (3.5mm)"},
+            {"name": "bt", "desc": "Soundbar (Bluetooth)"}]}
+    run = lambda *a: subprocess.run(["pactl", *a], capture_output=True, text=True, timeout=10, check=True).stdout
+    sinks = json.loads(run("-f", "json", "list", "sinks"))
+    default = run("get-default-sink").strip()
+    cur = next((s for s in sinks if s["name"] == default), sinks[0] if sinks else None)
+    vol = 0
+    if cur and cur.get("volume"):
+        vol = int(next(iter(cur["volume"].values()))["value_percent"].rstrip("%"))
+    return {"default": cur["name"] if cur else "", "vol": vol,
+            "sinks": [{"name": s["name"], "desc": s.get("description") or s["name"]} for s in sinks]}
+
+
+def pactl_set(*args):
+    if DEV:
+        print("PACTL:", args)
+        return
+    subprocess.run(["pactl", *args], capture_output=True, timeout=10, check=True)
+
+
 class Launcher:
     def __init__(self):
         pygame.init()
@@ -137,6 +161,8 @@ class Launcher:
         self.reboot_pending = False
         self.net = {}
         self.wifi_nets = None
+        self.audio = None            # None = loading, {} = unavailable
+        self.bt_devs = None
         self.busy = False
         self._status, self._status_at = {}, 0.0
         self._log, self._log_at = "", 0.0
@@ -314,6 +340,8 @@ class Launcher:
             self.opt("When TV turns off", "sleep_mode", SLEEP_OPTIONS),
             self.opt("Shutdown delay", "sleep_minutes", DELAY_OPTIONS),
             self.opt("HDMI-CEC remote", "cec_enabled", ONOFF),
+            row("Audio", value=self.audio_label, ok=self.open_audio, hint="Output device and volume"),
+            row("Bluetooth", ok=self.open_bluetooth, hint="Pair controllers, remotes and speakers"),
             row("Wi-Fi", value=self.net_label, ok=self.open_wifi, hint="Press OK to choose a network"),
             row("Device name", value=socket.gethostname, ok=self.edit_hostname, hint="Press OK to rename this device"),
             row("Updates", value=self.update_summary, ok=self.open_updates),
@@ -335,6 +363,107 @@ class Launcher:
         if DEV:
             return
         subprocess.Popen(["sudo", "-n", "/usr/bin/systemctl", "reboot"])
+
+    # ---------- audio ----------
+    def audio_label(self):
+        a = self.audio
+        if not a:
+            return ""
+        return next((s["desc"] for s in a["sinks"] if s["name"] == a["default"]), "")[:32]
+
+    def open_audio(self):
+        self.audio = None
+        self.open_menu("Audio", self.audio_rows(), "audio")
+        self.load_audio()
+
+    def load_audio(self):
+        bg(audio_state, self.on_audio)
+
+    def on_audio(self, res):
+        self.audio = res if isinstance(res, dict) else {}
+        if isinstance(res, Exception):
+            self.notify("Audio isn't available (is PipeWire running?)")
+        if self.menu and self.menu.get("id") == "audio":
+            self.menu["rows"] = self.audio_rows()
+            self.menu["sel"] = min(self.menu["sel"], len(self.menu["rows"]) - 1)
+
+    def audio_rows(self):
+        rows = []
+        if self.audio is None:
+            rows.append(row("Loading..."))
+        elif not self.audio.get("sinks"):
+            rows.append(row("No audio outputs found"))
+        else:
+            rows.append(row("Volume", value=lambda: f"‹  {self.audio['vol']}%  ›", change=self.change_volume))
+            for s in self.audio["sinks"]:
+                rows.append(row(s["desc"], value=lambda s=s: "Selected" if s["name"] == self.audio["default"] else "",
+                                ok=lambda s=s: self.pick_sink(s["name"]), hint="Press OK to use this output"))
+        rows.append(row("Back", ok=self.back))
+        return rows
+
+    def change_volume(self, step):
+        self.audio["vol"] = max(0, min(100, self.audio["vol"] + 5 * step))
+        vol = self.audio["vol"]
+        bg(lambda: pactl_set("set-sink-volume", "@DEFAULT_SINK@", f"{vol}%"), lambda r: None)
+
+    def pick_sink(self, name):
+        self.audio["default"] = name
+        bg(lambda: pactl_set("set-default-sink", name), lambda r: self.load_audio())
+
+    # ---------- Bluetooth ----------
+    def open_bluetooth(self):
+        self.open_menu("Bluetooth", self.bt_rows(), "bt")
+        self.scan_bt()
+
+    def scan_bt(self):
+        self.bt_devs = None
+        self.refresh_bt_menu()
+        bg(lambda: json.loads(root(SYS_HELPER, "bt-scan", timeout=60)), self.on_bt_scan)
+
+    def on_bt_scan(self, res):
+        self.bt_devs = res if isinstance(res, list) else []
+        if isinstance(res, Exception):
+            self.notify("Bluetooth isn't available on this Pi")
+        self.refresh_bt_menu()
+
+    def refresh_bt_menu(self):
+        if self.menu and self.menu.get("id") == "bt":
+            self.menu["rows"] = self.bt_rows()
+            self.menu["sel"] = min(self.menu["sel"], len(self.menu["rows"]) - 1)
+
+    def bt_rows(self):
+        rows = []
+        if self.bt_devs is None:
+            rows.append(row("Searching for devices... (put yours in pairing mode)"))
+        for d in self.bt_devs or []:
+            status = "Connected" if d["connected"] else "Paired" if d["paired"] else ""
+            rows.append(row(d["name"], value="  ·  ".join(x for x in (d["kind"], status) if x),
+                            ok=lambda d=d: self.open_bt_device(d)))
+        if self.bt_devs == []:
+            rows.append(row("No devices found"))
+        rows += [row("Search again", ok=self.scan_bt), row("Back", ok=self.back)]
+        return rows
+
+    def open_bt_device(self, d):
+        rows = []
+        if d["connected"]:
+            rows.append(row("Disconnect", ok=lambda: self.bt_act("disconnect", d)))
+        else:
+            rows.append(row("Connect" if d["paired"] else "Pair and connect",
+                            ok=lambda: self.bt_act("connect" if d["paired"] else "pair", d)))
+        if d["paired"]:
+            rows.append(row("Forget this device", ok=lambda: self.bt_act("forget", d)))
+        rows.append(row("Back", ok=self.back))
+        self.open_menu(d["name"], rows, "bt-device")
+
+    def bt_act(self, action, d):
+        self.back()
+        self.notify({"pair": "Pairing...", "connect": "Connecting..."}.get(action, "Working..."), 60)
+        bg(lambda: json.loads(root(SYS_HELPER, "bt", action, d["mac"], timeout=90)), self.on_bt_done)
+
+    def on_bt_done(self, res):
+        self.notify(res.get("msg", "Done") if isinstance(res, dict) else "Bluetooth failed")
+        self.scan_bt()
 
     # ---------- Wi-Fi / hostname ----------
     def open_wifi(self):
