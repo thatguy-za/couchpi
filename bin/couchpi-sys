@@ -5,7 +5,9 @@
   couchpi-sys wifi-connect <ssid>          password on stdin (empty for open networks)
   couchpi-sys set-hostname <name>
   couchpi-sys bt-scan                      scan ~8s, JSON list of Bluetooth devices
-  couchpi-sys bt <pair|connect|disconnect|forget> <mac>
+  couchpi-sys bt <connect|disconnect|forget> <mac>
+  couchpi-sys bt-pair <mac>                interactive pairing (PIN/passkey); JSON events on stdout,
+                                           answers on stdin, closing stdin cancels
 Always prints one JSON document on stdout.
 """
 import json
@@ -99,8 +101,131 @@ def bt_action(action, mac):
     return {"ok": ok, "msg": "Connected" if ok else "Could not connect (is the device in pairing mode?)"}
 
 
+BT_PATTERNS = [
+    ("paired", r"Pairing successful"),
+    ("fail", r"Failed to pair: (\S+)"),
+    ("request_pin", r"Enter PIN code:"),
+    ("request_passkey", r"Enter passkey"),
+    ("display_pin", r"\[agent\] PIN code: (\S+)"),
+    ("display_passkey", r"\[agent\] Passkey: (\d+)"),
+    ("confirm", r"Confirm passkey (\d+)"),
+    ("authorize", r"(?:Accept pairing|Authorize service)[^\n]*\(yes/no\)"),
+    ("connected", r"Connection successful"),
+    ("connfail", r"Failed to connect: (\S+)"),
+]
+BT_ERRORS = {"AuthenticationFailed": "Wrong PIN, or the device refused", "AuthenticationTimeout": "Timed out waiting for the device",
+             "AuthenticationCanceled": "Pairing cancelled", "ConnectionAttemptFailed": "Device didn't answer"}
+
+
+def bt_pair_stream(mac):
+    """Interactive pairing. Prints one JSON event per line; reads answers (PIN / yes / no)
+    from stdin. Closing stdin cancels. Events: display_passkey, display_pin, confirm,
+    request_pin, request_passkey, result."""
+    import os
+    import pty
+    import select
+    import termios
+    import time
+
+    def emit(**kw):
+        print(json.dumps(kw), flush=True)
+
+    if not MAC_RE.fullmatch(mac):
+        return emit(event="result", ok=False, msg="bad address")
+    subprocess.run(["rfkill", "unblock", "bluetooth"], capture_output=True)
+    master, slave = pty.openpty()
+    attrs = termios.tcgetattr(slave)
+    attrs[3] &= ~termios.ECHO
+    termios.tcsetattr(slave, termios.TCSANOW, attrs)
+    proc = subprocess.Popen(["bluetoothctl"], stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+    os.close(slave)
+
+    def send(s):
+        os.write(master, (s + "\n").encode())
+
+    for c in ("power on", "pairable on", "agent KeyboardDisplay", "default-agent", f"pair {mac}"):
+        send(c)
+    ansi = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|[\x01\x02]")
+    buf, waiting, last_code, result = "", None, None, None
+    paired = False
+    deadline = time.time() + 120
+    stdin_open = True
+
+    def finish_pairing():
+        nonlocal paired
+        paired = True
+        send(f"trust {mac}")
+        send(f"connect {mac}")
+
+    while result is None and time.time() < deadline:
+        r, _, _ = select.select([master] + ([sys.stdin] if stdin_open else []), [], [], 0.5)
+        if master in r:
+            try:
+                data = os.read(master, 4096)
+            except OSError:
+                break
+            buf += ansi.sub("", data.decode(errors="ignore")).replace("\r", "")
+            while True:
+                best = None
+                for name, rx in BT_PATTERNS:
+                    m = re.search(rx, buf)
+                    if m and (best is None or m.start() < best[1].start()):
+                        best = (name, m)
+                if not best:
+                    break
+                name, m = best
+                buf = buf[m.end():]
+                if name == "paired":
+                    finish_pairing()
+                elif name == "fail":
+                    if m.group(1).endswith("AlreadyExists"):
+                        finish_pairing()
+                    else:
+                        result = (False, BT_ERRORS.get(m.group(1).split(".")[-1], "Pairing failed"))
+                elif name in ("request_pin", "request_passkey"):
+                    waiting = "pin"
+                    emit(event=name)
+                elif name in ("display_pin", "display_passkey", "confirm"):
+                    if name == "confirm":
+                        waiting = "yes"
+                    if (name, m.group(1)) != last_code:
+                        last_code = (name, m.group(1))
+                        emit(event=name, code=m.group(1))
+                elif name == "authorize":
+                    send("yes")
+                elif name == "connected":
+                    result = (True, "Paired and connected")
+                elif name == "connfail":
+                    result = (paired, "Paired, but could not connect" if paired else "Could not connect")
+        if sys.stdin in r:
+            line = sys.stdin.readline()
+            if not line:
+                stdin_open = False
+                result = (False, "Pairing cancelled")
+                break
+            ans = line.strip()
+            if waiting == "pin" and re.fullmatch(r"[0-9A-Za-z]{1,16}", ans):
+                send(ans)
+            elif waiting == "yes":
+                send("yes" if ans == "yes" else "no")
+            waiting = None
+    if result is None:
+        result = (False, "Timed out")
+    if not result[0] or "Paired" not in result[1]:
+        send(f"cancel-pairing {mac}")
+    send("quit")
+    try:
+        proc.wait(3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    emit(event="result", ok=result[0], msg=result[1])
+
+
 def main(argv):
     try:
+        if argv[1:2] == ["bt-pair"] and len(argv) == 3:
+            bt_pair_stream(argv[2])
+            return
         if argv[1:2] == ["bt-scan"]:
             print(json.dumps(bt_scan()))
             return

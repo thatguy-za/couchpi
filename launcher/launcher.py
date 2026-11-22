@@ -163,6 +163,7 @@ class Launcher:
         self.wifi_nets = None
         self.audio = None            # None = loading, {} = unavailable
         self.bt_devs = None
+        self.pair, self.pair_proc = None, None
         self.busy = False
         self._status, self._status_at = {}, 0.0
         self._log, self._log_at = "", 0.0
@@ -417,6 +418,7 @@ class Launcher:
 
     def scan_bt(self):
         self.bt_devs = None
+        self.pair, self.pair_proc = None, None
         self.refresh_bt_menu()
         bg(lambda: json.loads(root(SYS_HELPER, "bt-scan", timeout=60)), self.on_bt_scan)
 
@@ -450,11 +452,91 @@ class Launcher:
             rows.append(row("Disconnect", ok=lambda: self.bt_act("disconnect", d)))
         else:
             rows.append(row("Connect" if d["paired"] else "Pair and connect",
-                            ok=lambda: self.bt_act("connect" if d["paired"] else "pair", d)))
+                            ok=lambda: self.bt_act("connect", d) if d["paired"] else self.start_pair(d)))
         if d["paired"]:
             rows.append(row("Forget this device", ok=lambda: self.bt_act("forget", d)))
         rows.append(row("Back", ok=self.back))
         self.open_menu(d["name"], rows, "bt-device")
+
+    def start_pair(self, d):
+        """Interactive pairing: the helper streams JSON events (passkey to show, PIN needed...)."""
+        self.back()
+        self.pair = {"name": d["name"], "kind": "wait", "code": "", "label": ""}
+        self.view = "pair"
+
+        def post(ev):
+            pygame.event.post(pygame.event.Event(BG_EVENT, cb=self.on_pair_event, res=ev))
+
+        if DEV:
+            self.pair_proc = None
+            def fake():
+                time.sleep(0.6)
+                post({"event": "display_passkey", "code": "482915"})
+                time.sleep(2.5)
+                post({"event": "result", "ok": True, "msg": "Paired and connected (dev)"})
+            threading.Thread(target=fake, daemon=True).start()
+            return
+        proc = subprocess.Popen(["sudo", "-n", SYS_HELPER, "bt-pair", d["mac"]], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        self.pair_proc = proc
+
+        def read():
+            got = False
+            for line in proc.stdout:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                got = got or ev.get("event") == "result"
+                post(ev)
+            if not got:
+                post({"event": "result", "ok": False, "msg": "Pairing failed"})
+        threading.Thread(target=read, daemon=True).start()
+
+    def pair_send(self, text):
+        p = getattr(self, "pair_proc", None)
+        if DEV or not p or not p.stdin:
+            print("PAIR ANSWER:", text)
+            return
+        try:
+            p.stdin.write(text + "\n")
+            p.stdin.flush()
+        except (OSError, ValueError):
+            pass
+
+    def pair_cancel(self):
+        p = getattr(self, "pair_proc", None)
+        if p and p.stdin:
+            try:
+                p.stdin.close()  # EOF tells the helper to cancel
+            except OSError:
+                pass
+        self.pair = None
+        self.view = "menu"
+        self.notify("Pairing cancelled")
+        self.scan_bt()
+
+    def on_pair_event(self, ev):
+        if not getattr(self, "pair", None):
+            return  # cancelled; ignore late events
+        e = ev.get("event")
+        name = self.pair["name"]
+        if e in ("display_passkey", "display_pin"):
+            self.pair.update(kind="show", code=ev["code"],
+                             label=f"Type this code on {name}, then press Enter")
+            self.view = "pair"
+        elif e == "confirm":
+            self.pair.update(kind="confirm", code=ev["code"],
+                             label=f"Does {name} show the same code?")
+            self.view = "pair"
+        elif e in ("request_pin", "request_passkey"):
+            self.open_keyboard(f"PIN for {name} (try 0000 or 1234)", "", self.pair_send, cancel=self.pair_cancel)
+        elif e == "result":
+            self.pair = None
+            if self.view in ("pair", "keyboard"):
+                self.view = "menu"
+            self.notify(ev.get("msg", "Done"))
+            self.scan_bt()
 
     def bt_act(self, action, d):
         self.back()
@@ -562,8 +644,8 @@ class Launcher:
         self.notify("That didn't work - see journalctl -u couchpi" if isinstance(res, Exception) else done)
 
     # ---------- keyboard ----------
-    def open_keyboard(self, title, text, cb, mask=False):
-        self.kb = {"title": title, "text": text, "cb": cb, "mask": mask, "show": not mask,
+    def open_keyboard(self, title, text, cb, mask=False, cancel=None):
+        self.kb = {"title": title, "text": text, "cb": cb, "cancel": cancel, "mask": mask, "show": not mask,
                    "layer": "abc", "shift": False, "r": 1, "c": 0}
         self.view = "keyboard"
 
@@ -574,7 +656,7 @@ class Launcher:
         kb = self.kb
         rows = self.kb_rows()
         if act == "back":
-            self.view = "menu"
+            self.kb_cancel()
         elif act in ("left", "right"):
             kb["c"] = (kb["c"] + (1 if act == "right" else -1)) % len(rows[kb["r"]])
         elif act in ("up", "down"):
@@ -595,12 +677,17 @@ class Launcher:
             elif key == "Clear":
                 kb["text"] = ""
             elif key == "Cancel":
-                self.view = "menu"
+                self.kb_cancel()
             elif key == "Done":
-                self.view = "menu"
+                self.view = "pair" if getattr(self, "pair", None) else "menu"
                 kb["cb"](kb["text"])
             else:
                 kb["text"] += key.upper() if kb["shift"] and kb["layer"] == "abc" else key
+
+    def kb_cancel(self):
+        self.view = "menu"
+        if self.kb.get("cancel"):
+            self.kb["cancel"]()
 
     # ---------- actions / input ----------
     def launch(self, app):
@@ -629,6 +716,12 @@ class Launcher:
                     self.launch(item)
         elif self.view == "keyboard":
             self.handle_kb(act)
+        elif self.view == "pair":
+            if act == "back":
+                self.pair_cancel()
+            elif act == "ok" and self.pair and self.pair["kind"] == "confirm":
+                self.pair["kind"], self.pair["label"] = "wait", "Confirming..."
+                self.pair_send("yes")
         else:
             m = self.menu
             rows = m["rows"]
@@ -737,11 +830,23 @@ class Launcher:
                 self.text(self.f_small, label, TEXT if sel else DIM, center=rect.center)
         self.text(self.f_small, "Back = cancel", DIM, midbottom=(self.W / 2, self.H * 0.93))
 
+    def draw_pair(self):
+        p = self.pair or {}
+        self.text(self.f_big, f"Pairing {p.get('name', '')}", TEXT, midtop=(self.W / 2, self.H * 0.14))
+        if p.get("code"):
+            big = pygame.font.Font(None, int(self.H * 0.22))
+            self.text(big, p["code"], TEXT, center=(self.W / 2, self.H * 0.48))
+        self.text(self.f_mid, p.get("label") or "Waiting for the device...", DIM, center=(self.W / 2, self.H * 0.68))
+        hint = "OK = yes     Back = cancel" if p.get("kind") == "confirm" else "Back = cancel"
+        self.text(self.f_small, hint, DIM, midbottom=(self.W / 2, self.H * 0.93))
+
     def draw(self, dt):
         self.screen.blit(self.bg, (0, 0))
         self.draw_header()
         if self.view == "home":
             self.draw_home(dt)
+        elif self.view == "pair":
+            self.draw_pair()
         elif self.view == "keyboard":
             self.draw_keyboard()
         else:

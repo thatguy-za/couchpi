@@ -27,8 +27,9 @@ Prefer to read it first? Clone the repo and run `sudo ./install.sh`.
   - *TV off:* do nothing, go idle (stop the app, CPU to power-save), or shut down after a delay.
   - *HDMI-CEC remote:* on/off.
   - *Audio:* choose the output (HDMI, headphone jack, Bluetooth speaker) and set the volume.
-  - *Bluetooth:* find, pair, connect and forget controllers, remotes and speakers. Devices that
-    need a PIN (some keyboards) aren't supported yet.
+  - *Bluetooth:* find, pair, connect and forget controllers, remotes and speakers. Pairing handles PINs
+    and passkeys: CouchPi shows the code to type on a keyboard, asks you to confirm a matching
+    code, or lets you type a PIN (try 0000 or 1234) with the on-screen keyboard.
   - *Wi-Fi:* scan, pick a network and type the password with the on-screen keyboard.
   - *Device name:* change the Pi's hostname.
   - *Updates:* shows what's available for the OS, Jellyfin Desktop, Chiaki-ng and CouchPi, with

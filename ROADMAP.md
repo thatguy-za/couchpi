@@ -6,7 +6,7 @@ those projects, so treat the priorities as opinions, not user research.
 
 ## High value (things most couch users expect)
 
-1. ~~Bluetooth pairing~~ and ~~audio output picker + volume~~: done (PIN-entry pairing still to do).
+1. ~~Bluetooth pairing~~ and ~~audio output picker + volume~~: done, including PIN/passkey pairing.
 3. **App catalogue**: browse and one-click install more apps from the couch (Kodi, Plex HTPC,
    Moonlight, Steam Link, YouTube/Netflix via a browser kiosk, Spotify), not only
    `couchpi-apps add`.
