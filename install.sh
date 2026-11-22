@@ -32,7 +32,7 @@ systemctl enable --now bluetooth.service 2>/dev/null || true
 
 echo "==> Copying files to $DEST"
 mkdir -p "$DEST/apps.d" "$CONF" /var/lib/couchpi
-cp -r "$SRC"/launcher "$SRC"/cec "$SRC"/bin "$DEST"/
+cp -r "$SRC"/launcher "$SRC"/cec "$SRC"/bin "$SRC"/splash "$DEST"/
 cp -r "$SRC"/apps.d/. "$DEST/apps.d/"      # your own app files in apps.d are left alone
 chmod +x "$DEST"/bin/* "$DEST"/launcher/launcher.py "$DEST"/cec/cecd.py
 ln -sf "$DEST/bin/couchpi-apps" /usr/local/bin/couchpi-apps
@@ -62,6 +62,9 @@ systemctl daemon-reload
 systemctl set-default graphical.target
 systemctl enable couchpi.service couchpi-cec.service couchpi-update.timer
 systemctl start couchpi-update.timer
+
+echo "==> Boot splash"
+"$DEST/bin/couchpi-splash" enable || echo "Note: boot splash could not be enabled (run 'sudo couchpi-splash enable' to retry)."
 
 if [ "$UPDATE" != "1" ] && [ "${COUCHPI_SKIP_APPS:-0}" != "1" ]; then
     echo "==> Installing apps (Jellyfin Desktop + Chiaki-ng; this can take a few minutes)"

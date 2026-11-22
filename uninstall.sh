@@ -10,6 +10,7 @@ rm -f /etc/systemd/system/couchpi.service /etc/systemd/system/couchpi-cec.servic
 systemctl daemon-reload
 systemctl set-default multi-user.target
 /opt/couchpi/bin/apply-display auto 2>/dev/null || true
+/opt/couchpi/bin/couchpi-splash disable 2>/dev/null || true
 rm -rf /opt/couchpi
 echo "Removed. Your settings remain in /etc/couchpi; the 'couchpi' user was kept."
 echo "Reboot to return to the console."

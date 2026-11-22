@@ -1,0 +1,55 @@
+#!/bin/bash
+# CouchPi boot splash. Usage: couchpi-splash enable | disable   (run as root)
+#   enable : installs the Plymouth theme, quiets the boot (cmdline.txt) and turns off the
+#            Pi firmware rainbow splash (config.txt). Backups: *.couchpi-bak (first run only).
+#   disable: removes those boot options again.
+set -euo pipefail
+
+SRC="${COUCHPI_SPLASH_SRC:-/opt/couchpi/splash}"
+THEME_DIR=/usr/share/plymouth/themes/couchpi
+BOOT=/boot/firmware
+[ -d "$BOOT" ] || BOOT=/boot
+CMDLINE="${COUCHPI_CMDLINE:-$BOOT/cmdline.txt}"
+CONFIG="${COUCHPI_CONFIG_TXT:-$BOOT/config.txt}"
+TOKENS=(quiet splash plymouth.ignore-serial-consoles loglevel=3 vt.global_cursor_default=0 logo.nologo)
+
+backup() { [ -f "$1.couchpi-bak" ] || cp "$1" "$1.couchpi-bak"; }
+
+enable() {
+    if [ -z "${COUCHPI_SKIP_PLYMOUTH:-}" ]; then
+        command -v plymouth-set-default-theme >/dev/null || { echo "plymouth is not installed" >&2; exit 1; }
+        install -d "$THEME_DIR"
+        cp "$SRC"/couchpi.plymouth "$SRC"/couchpi.script "$THEME_DIR"/
+        if [ "$(plymouth-set-default-theme)" != couchpi ]; then
+            plymouth-set-default-theme couchpi
+            command -v update-initramfs >/dev/null && update-initramfs -u || true
+        fi
+    fi
+    backup "$CMDLINE"
+    for t in "${TOKENS[@]}"; do
+        grep -qw -- "$t" "$CMDLINE" || { sed -i.cptmp "1s/\$/ $t/" "$CMDLINE"; rm -f "$CMDLINE.cptmp"; }
+    done
+    if [ -f "$CONFIG" ] && ! grep -q '^disable_splash=1' "$CONFIG"; then
+        backup "$CONFIG"
+        printf '\n# CouchPi splash\ndisable_splash=1\n' >> "$CONFIG"
+    fi
+    echo "Boot splash enabled. It shows from the next reboot."
+}
+
+disable() {
+    for t in "${TOKENS[@]}"; do
+        # keep options that were already there before we first ran
+        if [ -f "$CMDLINE.couchpi-bak" ] && grep -qw -- "$t" "$CMDLINE.couchpi-bak"; then continue; fi
+        sed -i.cptmp "1s/ ${t//./\\.}//g" "$CMDLINE"; rm -f "$CMDLINE.cptmp"
+    done
+    if [ -f "$CONFIG" ]; then
+        sed -i.cptmp '/^# CouchPi splash$/d; /^disable_splash=1$/d' "$CONFIG"; rm -f "$CONFIG.cptmp"
+    fi
+    echo "Boot splash options removed. Normal boot text returns after a reboot."
+}
+
+case "${1:-}" in
+    enable) enable ;;
+    disable) disable ;;
+    *) echo "usage: couchpi-splash enable|disable" >&2; exit 1 ;;
+esac

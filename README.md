@@ -43,6 +43,13 @@ to `powersave` ("Idle"), or shuts the Pi down after a delay ("Shut down"). A Pi 
 to RAM, and a halted Pi can't be woken over CEC, so "Idle" is the mode that wakes automatically
 when the TV comes back on.
 
+## Boot splash
+
+CouchPi replaces the scrolling boot text with a black screen showing "CouchPi" and a loading
+animation (a Plymouth theme). The installer turns it on; it appears from the next reboot.
+To switch it off or on again: `sudo couchpi-splash disable` / `sudo couchpi-splash enable`
+(backups of `cmdline.txt` and `config.txt` are kept next to them as `*.couchpi-bak`).
+
 ## Adding apps
 
 An app is one TOML file in `/opt/couchpi/apps.d/`:
