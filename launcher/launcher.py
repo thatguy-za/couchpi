@@ -52,7 +52,7 @@ KB_LAYERS = {
 }
 KB_BOTTOM = ["Shift", "abc/#+=", "Show", "Space", "Del", "Clear", "Cancel", "Done"]
 
-BG_TOP, BG_BOTTOM = (20, 24, 44), (5, 7, 14)
+BG_TOP, BG_BOTTOM = (22, 26, 48), (6, 8, 16)
 TEXT, DIM = (240, 242, 250), (140, 148, 170)
 
 
@@ -139,9 +139,6 @@ class Launcher:
     def __init__(self):
         pygame.init()
         pygame.display.set_caption("CouchPi")
-        names = "inter,notosans,dejavusans,liberationsans,helvetica,arial"
-        self.font_path = pygame.font.match_font(names)
-        self.font_path_bold = pygame.font.match_font(names, bold=True) or self.font_path
         if DEV:
             self.screen = pygame.display.set_mode((1280, 720))
         elif os.environ.get("COUCHPI_WINDOWED"):
@@ -156,7 +153,6 @@ class Launcher:
             except pygame.error:
                 pass
 
-        self.refresh_net()
         self.cfg = config.load()
         self.apps = load_apps()
         self.items = self.apps + [{"name": "Settings", "description": "Display, network, updates and more",
@@ -174,34 +170,19 @@ class Launcher:
         self._status, self._status_at = {}, 0.0
         self._log, self._log_at = "", 0.0
         self.message, self.message_until = "", 0
-        self.bar_y = None
-        self.fade_t, self.fade_len, self._last_key = time.time(), 0.7, None
-        self.t0 = time.time()
-        self.net_checked = 0.0
 
         self.layout()
 
     def layout(self):
         """(Re)compute everything that depends on the screen size."""
         self.W, self.H = self.screen.get_size()
-        self._fonts = {}
-        self.f_big = self.font(0.075, True)
-        self.f_mid = self.font(0.048)
-        self.f_small = self.font(0.034)
-        self.f_clock = self.font(0.072, True)
-        self.f_title = self.font(0.05, True)
+        self.f_big = pygame.font.Font(None, int(self.H * 0.075))
+        self.f_mid = pygame.font.Font(None, int(self.H * 0.048))
+        self.f_small = pygame.font.Font(None, int(self.H * 0.034))
         self.bg = self._make_bg()
-        self.fade_overlay = pygame.Surface((self.W, self.H))
-        self.fade_overlay.fill((0, 0, 0))
-        self.icons, self.sprites, self.labels = {}, {}, {}
+        self.icons = {}
 
-    def font(self, frac, bold=False):
-        key = (frac, bold)
-        if key not in self._fonts:
-            path = self.font_path_bold if bold else self.font_path
-            self._fonts[key] = pygame.font.Font(path, int(self.H * frac))
-        return self._fonts[key]
-
+    # ---------- helpers ----------
     def _make_bg(self):
         s = pygame.Surface((self.W, self.H))
         for y in range(self.H):
@@ -769,200 +750,69 @@ class Launcher:
                     r["change"](1)
 
     # ---------- drawing ----------
-    # ----- cached sprites -----
-    def glow_sprite(self, color, size):
-        key = ("glow", color, size)
-        if key not in self.sprites:
-            n = 96
-            surf = pygame.Surface((n, n), pygame.SRCALPHA)
-            c = n / 2
-            for y in range(n):
-                for x in range(n):
-                    a = max(0.0, 1.0 - math.hypot(x - c, y - c) / c) ** 2
-                    surf.set_at((x, y), (*color, int(255 * a)))
-            self.sprites[key] = pygame.transform.smoothscale(surf, (size, size))
-        return self.sprites[key]
-
-    def shadow_sprite(self, w, h):
-        key = ("shadow", w, h)
-        if key not in self.sprites:
-            pad = int(min(w, h) * 0.15)
-            surf = pygame.Surface((w + 2 * pad, h + 2 * pad), pygame.SRCALPHA)
-            pygame.draw.rect(surf, (0, 0, 0, 170), (pad, pad, w, h), border_radius=int(h * 0.1))
-            small = pygame.transform.smoothscale(surf, (max(1, surf.get_width() // 10), max(1, surf.get_height() // 10)))
-            self.sprites[key] = pygame.transform.smoothscale(small, surf.get_size())
-        return self.sprites[key]
-
-    def tile_surface(self, item, w, h):
-        key = ("tile", item["name"], w, h)
-        if key in self.sprites:
-            return self.sprites[key]
-        base = pygame.Color(item.get("color", "#374151"))
-        c = (base.r, base.g, base.b)
-        r = int(h * 0.1)
-        surf = pygame.Surface((w, h), pygame.SRCALPHA)
-        for y in range(h):
-            col = mix(mix(c, (255, 255, 255), 0.16), mix(c, (0, 0, 0), 0.38), y / h)
-            pygame.draw.line(surf, (*col, 255), (0, y), (w, y))
-        mask = pygame.Surface((w, h), pygame.SRCALPHA)
-        pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, w, h), border_radius=r)
-        surf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        gloss = pygame.Surface((w, h // 2), pygame.SRCALPHA)
-        for y in range(h // 2):
-            pygame.draw.line(gloss, (255, 255, 255, int(40 * (1 - y / (h / 2)))), (0, y), (w, y))
-        gmask = pygame.Surface((w, h // 2), pygame.SRCALPHA)
-        pygame.draw.rect(gmask, (255, 255, 255, 255), (0, 0, w, h // 2 + r), border_radius=r)
-        gloss.blit(gmask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        surf.blit(gloss, (0, 0))
-        pygame.draw.rect(surf, (255, 255, 255, 40), (0, 0, w, h), 2, border_radius=r)
-        icon = self.icon_for(item, int(h * 0.55))
-        if icon:
-            surf.blit(icon, icon.get_rect(center=(w // 2, h // 2)))
-        else:
-            letter = self.f_big.render(item["name"][:1].upper(), True, TEXT)
-            surf.blit(letter, letter.get_rect(center=(w // 2, h // 2)))
-        self.sprites[key] = surf
-        return surf
-
-    def label(self, font, s, color):
-        key = (id(font), s, color)
-        if key not in self.labels:
-            self.labels[key] = font.render(s, True, color)
-        return self.labels[key]
-
-    def draw_label(self, font, s, color, alpha=255, **pos):
-        surf = self.label(font, s, color)
-        surf.set_alpha(alpha)
-        self.screen.blit(surf, surf.get_rect(**pos))
-
-    def update_count(self):
-        s = self.status()
-        if not s:
-            return 0
-        return int(bool(s.get("os", {}).get("total"))) + sum(bool(s.get(k)) for k in ("jellyfin", "chiaki", "couchpi"))
-
-    # ----- screens -----
     def draw_header(self):
-        x, y = self.W * 0.05, self.H * 0.045
-        self.draw_label(self.f_title, "CouchPi", TEXT, topleft=(x, y))
-        sub = self.net_label() if self.net else ""
-        if sub:
-            self.draw_label(self.f_small, sub, DIM, topleft=(x, y + self.H * 0.065))
-        self.draw_label(self.f_clock, time.strftime("%H:%M"), TEXT, topright=(self.W * 0.95, y - self.H * 0.01))
-        self.draw_label(self.f_small, time.strftime("%A %d %B"), DIM, topright=(self.W * 0.95, y + self.H * 0.075))
-
-    def ambient(self, t, weights):
-        """Soft colour glow behind the content; follows the focused item."""
-        size = int(self.H * 1.7)
-        ox, oy = math.sin(t * 0.21) * self.W * 0.03, math.cos(t * 0.17) * self.H * 0.025
-        for color, wgt in weights:
-            if wgt > 0.02:
-                g = self.glow_sprite(color, size)
-                g.set_alpha(int(150 * wgt))
-                self.screen.blit(g, g.get_rect(center=(self.W / 2 + ox, self.H * 0.45 + oy)))
+        self.text(self.f_mid, "CouchPi", TEXT, topleft=(self.W * 0.05, self.H * 0.05))
+        self.text(self.f_mid, time.strftime("%H:%M"), DIM, topright=(self.W * 0.95, self.H * 0.05))
 
     def draw_home(self, dt):
-        self.anim += (self.sel - self.anim) * min(1.0, dt * 9)
-        t = time.time()
-        weights = []
-        for i, item in enumerate(self.items):
-            base = pygame.Color(item.get("accent", item.get("color", "#374151")))
-            weights.append(((base.r, base.g, base.b), max(0.0, 1.0 - abs(i - self.anim))))
-        self.ambient(t, weights)
-
+        self.anim += (self.sel - self.anim) * min(1.0, dt * 10)
         tw = int(self.W * 0.17)
         th = int(tw * 0.78)
         gap = int(tw * 0.2)
         cy = self.H * 0.50
-        order = sorted(range(len(self.items)), key=lambda i: max(0.0, 1.0 - abs(i - self.anim)))
-        for i in order:
-            item = self.items[i]
+        for i, item in enumerate(self.items):
             focus = max(0.0, 1.0 - abs(i - self.anim))
             scale = 1.0 + 0.2 * focus
+            w, h = int(tw * scale), int(th * scale)
             cx = self.W / 2 + (i - self.anim) * (tw + gap)
             if cx < -tw or cx > self.W + tw:
                 continue
-            w, h = int(tw * scale), int(th * scale)
-            tile = self.tile_surface(item, tw, th)
-            shadow = self.shadow_sprite(tw, th)
-            if abs(scale - 1.0) > 0.004:
-                tile = pygame.transform.smoothscale(tile, (w, h))
-                shadow = pygame.transform.smoothscale(
-                    shadow, (int(shadow.get_width() * scale), int(shadow.get_height() * scale)))
-            shadow.set_alpha(int(150 + 90 * focus))
-            self.screen.blit(shadow, shadow.get_rect(center=(cx, cy + h * 0.07 + 10 * focus)))
-            tile.set_alpha(int(255 * (0.6 + 0.4 * focus)))
-            rect = tile.get_rect(center=(cx, cy))
-            self.screen.blit(tile, rect)
+            rect = pygame.Rect(0, 0, w, h)
+            rect.center = (cx, cy)
+            base = pygame.Color(item.get("color", "#374151"))
+            col = mix((base.r, base.g, base.b), (40, 44, 60), 0.55 * (1 - focus))
             if focus > 0.5:
-                ring = mix(BG_BOTTOM, (240, 244, 255), (focus - 0.5) * 2)
-                pygame.draw.rect(self.screen, ring, rect.inflate(8, 8), 3, border_radius=int(h * 0.12))
-            if item.get("_builtin") == "settings":
-                n = self.update_count()
-                if n:
-                    r = int(self.H * 0.022)
-                    c = (rect.right - r, rect.top + r)
-                    pygame.draw.circle(self.screen, (235, 70, 70), c, r)
-                    num = self.f_small.render(str(n), True, (255, 255, 255))
-                    self.screen.blit(num, num.get_rect(center=c))
-            if focus > 0.05:
-                self.draw_label(self.f_mid, item["name"], TEXT, int(255 * focus),
-                                midtop=(cx, rect.bottom + self.H * 0.035))
+                glow = rect.inflate(int(w * 0.04), int(w * 0.04))
+                pygame.draw.rect(self.screen, (235, 238, 250), glow, 3, border_radius=int(h * 0.12))
+            pygame.draw.rect(self.screen, col, rect, border_radius=int(h * 0.1))
+            icon = self.icon_for(item, int(h * 0.55))
+            if icon:
+                self.screen.blit(icon, icon.get_rect(center=rect.center))
+            else:
+                self.text(self.f_big, item["name"][:1].upper(), TEXT, center=rect.center)
+            if focus > 0.5:
+                self.text(self.f_mid, item["name"], TEXT, midtop=(cx, rect.bottom + self.H * 0.03))
         desc = self.items[self.sel].get("description", "")
         if desc:
-            self.draw_label(self.f_small, desc, DIM, midtop=(self.W / 2, self.H * 0.80))
+            self.text(self.f_small, desc, DIM, midtop=(self.W / 2, self.H * 0.78))
 
-    def draw_menu(self, dt):
+    def draw_menu(self):
         m = self.menu
-        self.ambient(time.time(), [((60, 70, 140), 0.6)])
-        self.draw_label(self.f_big, m["title"], TEXT, midtop=(self.W / 2, self.H * 0.11))
+        self.text(self.f_big, m["title"], TEXT, midtop=(self.W / 2, self.H * 0.11))
         rh, gap = int(self.H * 0.07), int(self.H * 0.01)
         rw = int(self.W * 0.7)
         top = self.H * 0.24
         visible = max(1, int((self.H * 0.88 - top) // (rh + gap)))
-        n = len(m["rows"])
-        start = max(0, min(m["sel"] - visible // 2, n - visible))
-        shown = min(n, start + visible) - start
-        pad = int(self.H * 0.02)
-        left = (self.W - rw) // 2
-        panel = ("panel", rw + 2 * pad, shown * (rh + gap) + pad)
-        if panel not in self.sprites:
-            ps = pygame.Surface(panel[1:], pygame.SRCALPHA)
-            pygame.draw.rect(ps, (14, 18, 34, 175), ps.get_rect(), border_radius=int(rh * 0.5))
-            pygame.draw.rect(ps, (255, 255, 255, 22), ps.get_rect(), 2, border_radius=int(rh * 0.5))
-            self.sprites[panel] = ps
-        self.screen.blit(self.sprites[panel], (left - pad, int(top - pad)))
-        # gliding highlight bar
-        target = top + (m["sel"] - start) * (rh + gap)
-        self.bar_y = target if self.bar_y is None else self.bar_y + (target - self.bar_y) * min(1.0, dt * 16)
-        bar = ("bar", rw, rh)
-        if bar not in self.sprites:
-            bs = pygame.Surface((rw, rh), pygame.SRCALPHA)
-            for x in range(rw):
-                pygame.draw.line(bs, (*mix((105, 120, 215), (70, 80, 165), x / rw), 255), (x, 0), (x, rh))
-            mk = pygame.Surface((rw, rh), pygame.SRCALPHA)
-            pygame.draw.rect(mk, (255, 255, 255, 255), mk.get_rect(), border_radius=int(rh * 0.3))
-            bs.blit(mk, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-            self.sprites[bar] = bs
-        self.screen.blit(self.sprites[bar], (left, int(self.bar_y)))
-        for i in range(start, start + shown):
+        start = max(0, min(m["sel"] - visible // 2, len(m["rows"]) - visible))
+        for i in range(start, min(len(m["rows"]), start + visible)):
             r = m["rows"][i]
-            y = int(top + (i - start) * (rh + gap)) + rh // 2
+            rect = pygame.Rect((self.W - rw) // 2, int(top + (i - start) * (rh + gap)), rw, rh)
             sel = i == m["sel"]
-            self.draw_label(self.f_small, r["label"], TEXT if sel else (170, 178, 200), midleft=(left + rh * 0.4, y))
+            pygame.draw.rect(self.screen, (70, 80, 130) if sel else (24, 28, 46), rect, border_radius=int(rh * 0.25))
+            self.text(self.f_small, r["label"], TEXT if sel else DIM, midleft=(rect.left + rh * 0.4, rect.centery))
             v = r["value"]() if callable(r["value"]) else r["value"]
             if v:
-                self.draw_label(self.f_small, v, TEXT if sel else DIM, midright=(left + rw - rh * 0.4, y))
+                self.text(self.f_small, v, TEXT if sel else DIM, midright=(rect.right - rh * 0.4, rect.centery))
         cx, a = self.W / 2, int(self.H * 0.012)
         if start > 0:
-            y = int(top - self.H * 0.04)
+            y = int(top - self.H * 0.025)
             pygame.draw.polygon(self.screen, DIM, [(cx - a, y + a), (cx + a, y + a), (cx, y - a)])
-        if start + shown < n:
-            y = int(top + shown * (rh + gap) + self.H * 0.025)
+        if start + visible < len(m["rows"]):
+            y = int(self.H * 0.9)
             pygame.draw.polygon(self.screen, DIM, [(cx - a, y - a), (cx + a, y - a), (cx, y + a)])
         hint = m["rows"][m["sel"]]["hint"]
         if hint:
-            self.draw_label(self.f_small, hint, DIM, midbottom=(self.W / 2, self.H * 0.945))
+            self.text(self.f_small, hint, DIM, midbottom=(self.W / 2, self.H * 0.935))
 
     def draw_keyboard(self):
         kb = self.kb
@@ -1004,12 +854,6 @@ class Launcher:
         if surf is not None and surf.get_size() != (self.W, self.H):
             self.screen = surf  # window was resized by the compositor
             self.layout()
-        key = (self.view, self.menu["id"] if self.menu else None)
-        if key != self._last_key:
-            if self._last_key is not None:
-                self.fade_t, self.fade_len = time.time(), 0.22
-            self.bar_y = None
-            self._last_key = key
         self.screen.blit(self.bg, (0, 0))
         self.draw_header()
         if self.view == "home":
@@ -1019,16 +863,9 @@ class Launcher:
         elif self.view == "keyboard":
             self.draw_keyboard()
         else:
-            self.draw_menu(dt)
+            self.draw_menu()
         if time.time() < self.message_until:
-            self.draw_label(self.f_small, self.message, TEXT, midbottom=(self.W / 2, self.H * 0.98))
-        if self.fade_t is not None:
-            a = 1.0 - (time.time() - self.fade_t) / self.fade_len
-            if a <= 0:
-                self.fade_t = None
-            else:
-                self.fade_overlay.set_alpha(int(255 * a))
-                self.screen.blit(self.fade_overlay, (0, 0))
+            self.text(self.f_small, self.message, TEXT, midbottom=(self.W / 2, self.H * 0.98))
         pygame.display.flip()
 
     # ---------- main loop ----------
@@ -1036,9 +873,6 @@ class Launcher:
         clock = pygame.time.Clock()
         while True:
             dt = clock.tick(60) / 1000
-            if time.time() - self.net_checked > 60 and self.view == "home":
-                self.net_checked = time.time()
-                bg(lambda: (self.refresh_net(), None)[1], lambda r: None)
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
                     return
