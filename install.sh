@@ -17,9 +17,10 @@ UPDATE="${COUCHPI_UPDATE:-0}"
 echo "==> Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get -o DPkg::Lock::Timeout=600 update
-apt-get -o DPkg::Lock::Timeout=600 install -y cage xwayland python3-pygame python3-evdev cec-utils sudo flatpak \
+apt-get -o DPkg::Lock::Timeout=600 install -y fonts-dejavu-core cage xwayland python3-pygame python3-evdev cec-utils sudo flatpak \
     unattended-upgrades curl ca-certificates \
     seatd bluez pipewire pipewire-pulse wireplumber libspa-0.2-bluetooth pulseaudio-utils
+apt-get -o DPkg::Lock::Timeout=600 install -y fonts-inter >/dev/null 2>&1 || true   # nicer UI font if available
 command -v nmcli >/dev/null || echo "Note: NetworkManager not found; Wi-Fi settings need it (default on Pi OS Bookworm+)."
 
 echo "==> Creating the 'couchpi' user"

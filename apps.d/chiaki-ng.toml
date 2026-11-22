@@ -2,6 +2,7 @@ name = "Chiaki-ng"
 description = "PlayStation Remote Play"
 color = "#1e40af"
 order = 20
+accent = "#2f6fe0"
 icon = "icons/chiaki-ng.png"
 command = "flatpak run io.github.streetpea.Chiaki4deck"
 

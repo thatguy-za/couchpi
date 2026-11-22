@@ -2,6 +2,7 @@ name = "Jellyfin"
 description = "Watch your media library"
 color = "#0f172a"
 order = 10
+accent = "#7c5cd6"
 icon = "icons/jellyfin.png"
 command = "flatpak run org.jellyfin.JellyfinDesktop"
 
