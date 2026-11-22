@@ -141,10 +141,12 @@ class Launcher:
         pygame.display.set_caption("CouchPi")
         if DEV:
             self.screen = pygame.display.set_mode((1280, 720))
+        elif os.environ.get("COUCHPI_WINDOWED"):
+            # under a kiosk compositor a plain window is made fullscreen for us
+            self.screen = pygame.display.set_mode((1920, 1080), pygame.RESIZABLE)
         else:
             self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
         pygame.mouse.set_visible(False)
-        self.W, self.H = self.screen.get_size()
         for i in range(pygame.joystick.get_count()):
             try:
                 pygame.joystick.Joystick(i).init()
@@ -169,6 +171,11 @@ class Launcher:
         self._log, self._log_at = "", 0.0
         self.message, self.message_until = "", 0
 
+        self.layout()
+
+    def layout(self):
+        """(Re)compute everything that depends on the screen size."""
+        self.W, self.H = self.screen.get_size()
         self.f_big = pygame.font.Font(None, int(self.H * 0.075))
         self.f_mid = pygame.font.Font(None, int(self.H * 0.048))
         self.f_small = pygame.font.Font(None, int(self.H * 0.034))
@@ -843,6 +850,10 @@ class Launcher:
         self.text(self.f_small, hint, DIM, midbottom=(self.W / 2, self.H * 0.93))
 
     def draw(self, dt):
+        surf = pygame.display.get_surface()
+        if surf is not None and surf.get_size() != (self.W, self.H):
+            self.screen = surf  # window was resized by the compositor
+            self.layout()
         self.screen.blit(self.bg, (0, 0))
         self.draw_header()
         if self.view == "home":

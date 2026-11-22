@@ -1,25 +1,72 @@
 #!/bin/bash
 # Session supervisor: run the launcher in a kiosk compositor; when it exits
 # having picked an app, run that app in its own compositor, then loop back.
+#
+# The launcher tries SDL video drivers in order. If it crashes (e.g. a segfault in
+# SDL's Wayland driver) we move on to the next one; the working one is then kept.
 RUN="${COUCHPI_RUN:-/run/couchpi}"
 LAUNCHER="${COUCHPI_LAUNCHER:-/opt/couchpi/launcher/launcher.py}"
 mkdir -p "$RUN"
-export SDL_VIDEODRIVER=wayland
+export LIBSEAT_BACKEND=seatd   # seatd (root daemon) owns the VT
+export PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1
+
+DRIVERS=(${COUCHPI_VIDEO_DRIVERS:-wayland-windowed kmsdrm wayland})
+n=0
+LAST_RC=0
+
+kms_index() {  # which /dev/dri/cardN has a connected display (not always card0)
+    local s
+    for s in /sys/class/drm/card[0-9]*-*/status; do
+        [ -r "$s" ] && [ "$(cat "$s")" = connected ] || continue
+        s="${s#/sys/class/drm/card}"
+        echo "${s%%-*}"
+        return
+    done
+}
 
 run_in_cage() {
+    echo "couchpi-session: starting cage (SDL_VIDEODRIVER=${SDL_VIDEODRIVER:-unset}): $*"
     cage -s -d -- "$@" &
     echo $! > "$RUN/app.pid"
     wait $!
+    LAST_RC=$?
+    echo "couchpi-session: cage exited with status $LAST_RC"
+}
+
+run_direct() {  # no compositor: SDL draws straight to the screen (kmsdrm)
+    echo "couchpi-session: starting directly (SDL_VIDEODRIVER=$SDL_VIDEODRIVER): $*"
+    "$@" &
+    echo $! > "$RUN/app.pid"
+    wait $!
+    LAST_RC=$?
+    echo "couchpi-session: process exited with status $LAST_RC"
 }
 
 while true; do
+    drv="${DRIVERS[$((n % ${#DRIVERS[@]}))]}"
+    unset COUCHPI_WINDOWED SDL_KMSDRM_DEVICE_INDEX
+    case "$drv" in
+        wayland-windowed) export SDL_VIDEODRIVER=wayland COUCHPI_WINDOWED=1 ;;
+        kmsdrm)           export SDL_VIDEODRIVER=kmsdrm SDL_KMSDRM_DEVICE_INDEX="$(kms_index)" ;;
+        *)                export SDL_VIDEODRIVER="$drv" ;;
+    esac
     rm -f "$RUN/launch"
-    run_in_cage python3 "$LAUNCHER"
+    if [ "$drv" = kmsdrm ]; then
+        echo "couchpi-session: kmsdrm device index: ${SDL_KMSDRM_DEVICE_INDEX:-auto}"
+        run_direct python3 "$LAUNCHER"
+    else
+        run_in_cage python3 "$LAUNCHER"
+    fi
     if [ -s "$RUN/launch" ]; then
         cmd="$(cat "$RUN/launch")"
         rm -f "$RUN/launch"
-        run_in_cage bash -c "$cmd"
+        # apps must not inherit the launcher's SDL driver choice
+        ( unset SDL_VIDEODRIVER COUCHPI_WINDOWED SDL_KMSDRM_DEVICE_INDEX; run_in_cage bash -c "$cmd" )
+    elif [ "$LAST_RC" -ne 0 ] && [ "$LAST_RC" -ne 143 ]; then
+        n=$((n + 1))
+        echo "couchpi-session: launcher failed (status $LAST_RC) with $drv; trying the next video driver"
+        sleep 1
     else
-        sleep 1   # launcher was killed (Home/sleep) or crashed: don't spin
+        sleep 1   # launcher was killed (Home/sleep): don't spin
     fi
 done

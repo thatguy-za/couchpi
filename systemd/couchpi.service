@@ -1,7 +1,7 @@
 [Unit]
 Description=CouchPi launcher (kiosk session on tty1)
-After=systemd-user-sessions.service plymouth-quit-wait.service getty@tty1.service systemd-logind.service
-Wants=dbus.socket systemd-logind.service
+After=systemd-user-sessions.service plymouth-quit-wait.service getty@tty1.service systemd-logind.service seatd.service
+Wants=dbus.socket systemd-logind.service seatd.service
 Conflicts=getty@tty1.service
 Before=graphical.target
 ConditionPathExists=/dev/tty0
