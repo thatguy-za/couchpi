@@ -54,8 +54,8 @@ To switch it off or on again: `sudo couchpi-splash disable` / `sudo couchpi-spla
 
 ## Phone keyboard, remote and touchpad
 
-Settings > **Phone keyboard** shows an address, a QR code and a 4-digit PIN. On a phone on the
-same Wi-Fi, open the address (or scan the code), enter the PIN once, and you get:
+Settings > **Phone keyboard** shows an address (just `http://couchpi.local`, port 80), a QR code and
+a 4-digit PIN. On a phone on the same Wi-Fi, open the address (or scan the code), enter the PIN once, and you get:
 
 - **Keyboard:** type or paste into the box and tap Send; the Pi types it into whatever is
   selected on the TV (Wi-Fi passwords, Chiaki-ng's Account ID and PIN fields, sign-ins). A "live

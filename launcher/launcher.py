@@ -780,10 +780,11 @@ class Launcher:
             self.text(self.f_small, "Check:  sudo systemctl status couchpi-companion", DIM, center=(self.W / 2, self.H * 0.53))
             self.text(self.f_small, "Back = return", DIM, midbottom=(self.W / 2, self.H * 0.93))
             return
-        port = info.get("port", 8765)
+        port = info.get("port", 80)
+        suffix = "" if port == 80 else f":{port}"
         ip = self.net.get("ip")
-        urls = [f"http://{ip}:{port}"] if ip else []
-        urls.append(f"http://{socket.gethostname()}.local:{port}")
+        urls = [f"http://{ip}{suffix}"] if ip else []
+        urls.append(f"http://{socket.gethostname()}.local{suffix}")
         x = self.W * 0.1
         self.text(self.f_small, "1.  Join the same Wi-Fi as this Pi, then open on your phone:", DIM, topleft=(x, self.H * 0.28))
         for i, u in enumerate(urls):

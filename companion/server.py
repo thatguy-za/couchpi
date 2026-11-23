@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """CouchPi phone companion: a small web server that turns a phone into a keyboard,
-remote and touchpad for the Pi. Open http://<pi>:8765 on the same Wi-Fi and enter the
-PIN shown in CouchPi > Settings > Phone keyboard.
+remote and touchpad for the Pi. Open http://<pi> on the same Wi-Fi and enter the
+PIN shown in CouchPi > Settings > Phone keyboard. Listens on port 80, so the
+address is just http://couchpi.local (the unit grants CAP_NET_BIND_SERVICE for that).
 
 Runs as the unprivileged `couchpi` user (it has access to /dev/uinput through the
 `input` group). Standard library only, apart from python3-evdev.
@@ -15,7 +16,7 @@ import socket
 import threading
 import time
 
-PORT = int(os.environ.get("COUCHPI_COMPANION_PORT", "8765"))
+PORT = int(os.environ.get("COUCHPI_COMPANION_PORT", "80"))
 RUN_DIR = os.environ.get("COUCHPI_RUN", "/run/couchpi")
 STATE_DIR = os.environ.get("COUCHPI_STATE", "/var/lib/couchpi")
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
