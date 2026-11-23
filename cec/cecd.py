@@ -93,7 +93,7 @@ def handle_line(line):
                 kill_app()
         return
     low = line.lower()
-    if "power status" in low:
+    if "power status" in low and not ("changed" in low and "tv (0)" not in low):  # ignore our own device's status
         tail = (low.split("to ")[-1] if "changed" in low else low.split(":")[-1]).strip().strip("'")
         if tail.startswith("standby"):
             tv_state = "standby"
@@ -137,7 +137,7 @@ def main():
             continue
         try:
             proc = subprocess.Popen(
-                ["cec-client", "-d", "8", "-t", "p", "-o", "CouchPi"],
+                ["cec-client", "-d", "20", "-t", "p", "-o", "CouchPi"]  # 20 = notice + debug: key presses are debug-level,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, bufsize=1)
         except OSError as ex:
