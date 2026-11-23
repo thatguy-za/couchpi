@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CouchPi phone companion: a small web server that turns a phone into a keyboard,
 remote and touchpad for the Pi. Open http://<pi> on the same Wi-Fi and enter the
-PIN shown in CouchPi > Settings > Phone keyboard. Listens on port 80, so the
+one-time 4-digit code that pops up on the TV. Listens on port 80, so the
 address is just http://couchpi.local (the unit grants CAP_NET_BIND_SERVICE for that).
 
 Runs as the unprivileged `couchpi` user (it has access to /dev/uinput through the
@@ -130,63 +130,153 @@ class Devices:
             self.mouse.syn()
 
 
+PENDING_TTL = 300      # a pairing code is valid for 5 minutes
+MAX_PENDING = 5        # codes shown at once; the oldest is dropped
+MAX_TRIES = 3          # wrong guesses allowed per code
+REQUEST_GAP = 3        # seconds between new codes from one address
+LOCK_AFTER = 10        # wrong guesses (all codes) within 10 minutes ...
+LOCK_FOR = 300         # ... lock pairing for 5 minutes
+
+
+class Locked(Exception):
+    def __init__(self, seconds):
+        self.seconds = int(seconds) + 1
+
+
 class State:
-    """PIN and paired-phone tokens, kept across restarts."""
+    """Paired-phone tokens (kept across restarts) and pending one-time pairing codes."""
 
     def __init__(self):
         os.makedirs(STATE_DIR, exist_ok=True)
         self.path = os.path.join(STATE_DIR, "companion.json")
         try:
             with open(self.path) as f:
-                self.data = json.load(f)
-        except (OSError, ValueError):
-            self.data = {}
-        if not self.data.get("pin"):
-            self.data["pin"] = f"{secrets.randbelow(10000):04d}"
-        self.data.setdefault("tokens", [])
-        self.fails, self.locked_until = 0, 0.0
+                self.tokens = list(json.load(f).get("tokens", []))[-20:]
+        except (OSError, ValueError, AttributeError):
+            self.tokens = []
+        self.pending = {}        # request id -> {"pin", "created", "tries", "ip"}
+        self.fail_times = []
+        self.locked_until = 0.0
+        self.last_request = {}   # ip -> time of its last new code
+        self.lock = threading.RLock()
         self.save()
+        self.publish()
 
     def save(self):
         tmp = self.path + ".tmp"
         with open(tmp, "w") as f:
-            json.dump(self.data, f)
+            json.dump({"tokens": self.tokens}, f)
         os.replace(tmp, self.path)
 
-    def try_pin(self, pin):
-        """Returns a new token, or None. Five wrong PINs lock logins for a minute."""
-        if time.time() < self.locked_until:
-            return None
-        if secrets.compare_digest(str(pin), self.data["pin"]):
-            self.fails = 0
-            token = secrets.token_urlsafe(24)
-            self.data["tokens"] = (self.data["tokens"] + [token])[-20:]
-            self.save()
-            return token
-        self.fails += 1
-        if self.fails >= 5:
-            self.fails, self.locked_until = 0, time.time() + 60
-        return None
+    def publish(self):
+        """Tell the launcher what to show: pending codes (for the popup) and how many phones are paired."""
+        with self.lock:
+            now = time.time()
+            data = {"port": PORT, "paired": len(self.tokens),
+                    "pending": [{"id": rid, "pin": r["pin"], "ip": r["ip"], "expires": r["created"] + PENDING_TTL}
+                                for rid, r in sorted(self.pending.items(), key=lambda kv: kv[1]["created"])
+                                if now < r["created"] + PENDING_TTL]}
+        try:
+            os.makedirs(RUN_DIR, exist_ok=True)
+            tmp = os.path.join(RUN_DIR, "companion.json.tmp")
+            with open(tmp, "w") as f:
+                json.dump(data, f)
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, os.path.join(RUN_DIR, "companion.json"))
+        except OSError:
+            pass
+
+    def prune(self):
+        with self.lock:
+            now = time.time()
+            dead = [rid for rid, r in self.pending.items() if now >= r["created"] + PENDING_TTL]
+            for rid in dead:
+                del self.pending[rid]
+            if dead:
+                self.publish()
 
     def valid(self, token):
-        return bool(token) and any(secrets.compare_digest(token, t) for t in self.data["tokens"])
+        with self.lock:
+            return bool(token) and any(secrets.compare_digest(token, t) for t in self.tokens)
+
+    def request(self, ip, req_id):
+        """Start (or continue) pairing for a browser; returns (request id, is_new).
+        A new random 4-digit code is created and shown on the TV."""
+        with self.lock:
+            self.prune()
+            if req_id in self.pending:
+                return req_id, False
+            now = time.time()
+            if now < self.locked_until:
+                raise Locked(self.locked_until - now)
+            if now - self.last_request.get(ip, 0) < REQUEST_GAP:
+                raise Locked(REQUEST_GAP)
+            self.last_request[ip] = now
+            while len(self.pending) >= MAX_PENDING:
+                del self.pending[min(self.pending, key=lambda k: self.pending[k]["created"])]
+            rid = secrets.token_urlsafe(12)
+            self.pending[rid] = {"pin": f"{secrets.randbelow(10000):04d}", "created": now, "tries": 0, "ip": ip}
+            self.publish()
+            return rid, True
+
+    def verify(self, req_id, pin):
+        """Returns ("ok", token) | ("wrong", tries_left) | ("expired", None) | ("locked", seconds)."""
+        with self.lock:
+            self.prune()
+            now = time.time()
+            if now < self.locked_until:
+                return "locked", self.locked_until - now
+            r = self.pending.get(req_id)
+            if not r:
+                return "expired", None
+            if secrets.compare_digest(str(pin), r["pin"]):
+                del self.pending[req_id]
+                token = secrets.token_urlsafe(24)
+                self.tokens = (self.tokens + [token])[-20:]
+                self.save()
+                self.publish()
+                return "ok", token
+            r["tries"] += 1
+            self.fail_times = [t for t in self.fail_times if now - t < 600] + [now]
+            if len(self.fail_times) >= LOCK_AFTER:
+                self.fail_times, self.locked_until = [], now + LOCK_FOR
+                self.pending.clear()
+                self.publish()
+                return "locked", LOCK_FOR
+            if r["tries"] >= MAX_TRIES:
+                del self.pending[req_id]
+                self.publish()
+                return "expired", None
+            return "wrong", MAX_TRIES - r["tries"]
+
+    def cancel(self, req_id):
+        with self.lock:
+            if self.pending.pop(req_id, None) is not None:
+                self.publish()
+
+    def revoke_all(self):
+        with self.lock:
+            self.tokens = []
+            self.save()
+            self.publish()
 
 
 STATE = None
 DEVICES = None
 
 
-def write_status():
-    """Tell the launcher how to reach us (it shows the PIN and a QR code)."""
-    try:
-        os.makedirs(RUN_DIR, exist_ok=True)
-        tmp = os.path.join(RUN_DIR, "companion.json.tmp")
-        with open(tmp, "w") as f:
-            json.dump({"port": PORT, "pin": STATE.data["pin"]}, f)
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, os.path.join(RUN_DIR, "companion.json"))
-    except OSError:
-        pass
+def watcher():
+    """Housekeeping: expire old codes, and sign out all phones when the launcher asks."""
+    flag = os.path.join(RUN_DIR, "revoke_all")
+    while True:
+        time.sleep(1)
+        STATE.prune()
+        if os.path.exists(flag):
+            try:
+                os.remove(flag)
+            except OSError:
+                pass
+            STATE.revoke_all()
 
 
 def set_pointer(on):
@@ -235,12 +325,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _token(self):
+    def _cookie(self, name):
         for part in self.headers.get("Cookie", "").split(";"):
             k, _, v = part.strip().partition("=")
-            if k == "cp":
+            if k == name:
                 return v
         return ""
+
+    def _token(self):
+        return self._cookie("cp")
 
     def do_GET(self):
         path = self.path.split("?")[0]
@@ -265,12 +358,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (ValueError, OSError):
             return self._send(400, {"error": "bad request"})
 
-        if path == "/api/login":
-            token = STATE.try_pin(body.get("pin", ""))
-            if not token:
-                return self._send(401, {"ok": False, "error": "Wrong PIN (5 wrong tries locks it for a minute)"})
-            cookie = f"cp={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
-            return self._send(200, {"ok": True}, headers=[("Set-Cookie", cookie)])
+        if path == "/api/pair/request":
+            try:
+                rid, fresh = STATE.request(self.client_address[0], self._cookie("cp_req"))
+            except Locked as e:
+                return self._send(429, {"ok": False, "error": f"Too many attempts. Try again in {e.seconds} s."})
+            cookie = [("Set-Cookie", f"cp_req={rid}; Path=/; HttpOnly; SameSite=Strict; Max-Age={PENDING_TTL}")]
+            return self._send(200, {"ok": True, "new": fresh, "ttl": PENDING_TTL}, headers=cookie)
+
+        if path == "/api/pair/verify":
+            result, info = STATE.verify(self._cookie("cp_req"), body.get("pin", ""))
+            if result == "ok":
+                cookie = [("Set-Cookie", f"cp={info}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"),
+                          ("Set-Cookie", "cp_req=; Path=/; Max-Age=0")]
+                return self._send(200, {"ok": True}, headers=cookie)
+            if result == "wrong":
+                return self._send(401, {"ok": False, "error": f"Wrong code. {info} tries left."})
+            if result == "locked":
+                return self._send(429, {"ok": False, "locked": True, "error": f"Too many wrong codes. Try again in {int(info) + 1} s."})
+            return self._send(410, {"ok": False, "expired": True, "error": "That code has expired. Getting a new one..."})
+
+        if path == "/api/pair/cancel":
+            STATE.cancel(self._cookie("cp_req"))
+            return self._send(200, {"ok": True})
 
         if not STATE.valid(self._token()):
             return self._send(401, {"ok": False, "error": "not paired"})
@@ -310,7 +420,7 @@ def main():
     global STATE, DEVICES
     STATE = State()
     DEVICES = Devices()
-    write_status()
+    threading.Thread(target=watcher, daemon=True).start()
     print(f"couchpi-companion listening on :{PORT} (host {socket.gethostname()})", flush=True)
     Server(("0.0.0.0", PORT), Handler).serve_forever()
 

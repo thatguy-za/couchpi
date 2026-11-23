@@ -159,6 +159,7 @@ class Launcher:
                                    "color": "#4b5563", "glyph": "gear", "_builtin": "settings"}]
         self.sel, self.anim = 0, 0.0
         self.power_focus = False
+        self.comp, self.comp_at, self.dismissed = {}, 0.0, set()
         self.view = "home"           # home | menu | keyboard
         self.menu, self.stack, self.kb = None, [], None
         self.reboot_pending = False
@@ -362,8 +363,9 @@ class Launcher:
             row("Audio", value=self.audio_label, ok=self.open_audio, hint="Output device and volume"),
             row("Bluetooth", ok=self.open_bluetooth, hint="Pair controllers, remotes and speakers"),
             row("Wi-Fi", value=self.net_label, ok=self.open_wifi, hint="Press OK to choose a network"),
-            row("Phone keyboard", value=lambda: "Type from your phone", ok=self.open_companion,
-                hint="Use your phone as a keyboard, remote and touchpad"),
+            row("Phone keyboard", value=lambda: (f"{self.comp.get('paired', 0)} connected" if "port" in self.comp else "Off"),
+                ok=self.open_companion, hint="Use your phone as a keyboard, remote and touchpad"),
+            row("Sign out phones", ok=self.sign_out_phones, hint="Disconnect every paired phone; they will need a new code"),
             row("Device name", value=socket.gethostname, ok=self.edit_hostname, hint="Press OK to rename this device"),
             row("Updates", value=self.update_summary, ok=self.open_updates),
             row("Restart now", value=lambda: "needed" if self.reboot_pending else "", ok=self.reboot),
@@ -740,14 +742,37 @@ class Launcher:
 
     # ---------- actions / input ----------
     # ---------- phone companion ----------
-    def open_companion(self):
-        self.refresh_net()
+    def poll_companion(self):
+        """Read the companion server's status (pending pairing codes, paired phones) twice a second."""
+        if time.time() - self.comp_at < 0.4:
+            return
+        self.comp_at = time.time()
         try:
             with open(os.path.join(RUN_DIR, "companion.json")) as f:
                 self.comp = json.load(f)
         except (OSError, ValueError):
             self.comp = {}
+
+    def active_request(self):
+        """The newest pairing request still waiting for its code (and not dismissed on the TV)."""
+        now = time.time()
+        for r in reversed(self.comp.get("pending", [])):
+            if r["id"] not in self.dismissed and r["expires"] > now:
+                return r
+        return None
+
+    def open_companion(self):
+        self.refresh_net()
+        self.poll_companion()
         self.view = "companion"
+
+    def sign_out_phones(self):
+        try:
+            os.makedirs(RUN_DIR, exist_ok=True)
+            open(os.path.join(RUN_DIR, "revoke_all"), "w").close()  # the companion server picks this up
+            self.notify("Signing out all phones...")
+        except OSError:
+            self.notify("Could not sign phones out")
 
     def qr_surface(self, url, size):
         key = ("qr", url, size)
@@ -773,9 +798,9 @@ class Launcher:
         return self.icons[key]
 
     def draw_companion(self):
-        info = getattr(self, "comp", {})
+        info = self.comp
         self.text(self.f_big, "Phone keyboard", TEXT, midtop=(self.W / 2, self.H * 0.11))
-        if not info.get("pin"):
+        if "port" not in info:
             self.text(self.f_mid, "The phone keyboard service isn't running.", TEXT, center=(self.W / 2, self.H * 0.45))
             self.text(self.f_small, "Check:  sudo systemctl status couchpi-companion", DIM, center=(self.W / 2, self.H * 0.53))
             self.text(self.f_small, "Back = return", DIM, midbottom=(self.W / 2, self.H * 0.93))
@@ -785,18 +810,44 @@ class Launcher:
         ip = self.net.get("ip")
         urls = [f"http://{ip}{suffix}"] if ip else []
         urls.append(f"http://{socket.gethostname()}.local{suffix}")
-        x = self.W * 0.1
-        self.text(self.f_small, "1.  Join the same Wi-Fi as this Pi, then open on your phone:", DIM, topleft=(x, self.H * 0.28))
+        x = self.W * 0.08
+        self.text(self.f_small, "1.  On a phone or tablet on the same Wi-Fi, open:", DIM, topleft=(x, self.H * 0.28))
         for i, u in enumerate(urls):
             self.text(self.f_mid, u, TEXT, topleft=(x + self.W * 0.02, self.H * (0.35 + 0.07 * i)))
-        self.text(self.f_small, "2.  Enter this PIN when asked:", DIM, topleft=(x, self.H * 0.55))
-        big = pygame.font.Font(self.font_path_bold if hasattr(self, "font_path_bold") else None, int(self.H * 0.16))
-        self.text(big, info["pin"], TEXT, topleft=(x + self.W * 0.02, self.H * 0.61))
-        qr = self.qr_surface(urls[0], int(self.H * 0.42))
+        self.text(self.f_small, "2.  A 4-digit code pops up on this screen. Enter it on the phone.", DIM, topleft=(x, self.H * 0.56))
+        self.text(self.f_small, "3.  The phone stays connected until its cookies are cleared.", DIM, topleft=(x, self.H * 0.63))
+        n = info.get("paired", 0)
+        self.text(self.f_small, f"{n} phone{'s' if n != 1 else ''} connected now.  Settings > Sign out phones removes them all.",
+                  DIM, topleft=(x, self.H * 0.72))
+        qr = self.qr_surface(urls[0], int(self.H * 0.40))
         if qr:
-            self.screen.blit(qr, qr.get_rect(center=(self.W * 0.78, self.H * 0.5)))
-            self.text(self.f_small, "or scan", DIM, midtop=(self.W * 0.78, self.H * 0.5 + qr.get_height() / 2 + 8))
+            self.screen.blit(qr, qr.get_rect(center=(self.W * 0.79, self.H * 0.46)))
+            self.text(self.f_small, "or scan", DIM, midtop=(self.W * 0.79, self.H * 0.46 + qr.get_height() / 2 + 8))
         self.text(self.f_small, "Back = return", DIM, midbottom=(self.W / 2, self.H * 0.93))
+
+    def draw_pair_popup(self):
+        req = self.active_request()
+        if not req:
+            return
+        self.screen.blit(self.shade_surface(), (0, 0))
+        w, h = int(self.W * 0.5), int(self.H * 0.46)
+        panel = pygame.Rect(0, 0, w, h)
+        panel.center = (self.W // 2, self.H // 2)
+        pygame.draw.rect(self.screen, (26, 30, 56), panel, border_radius=int(h * 0.08))
+        pygame.draw.rect(self.screen, (110, 125, 235), panel, 3, border_radius=int(h * 0.08))
+        self.text(self.f_mid, "A device wants to connect", TEXT, midtop=(panel.centerx, panel.top + h * 0.08))
+        self.text(self.f_small, f"from {req.get('ip', '')}", DIM, midtop=(panel.centerx, panel.top + h * 0.24))
+        big = pygame.font.Font(None, int(self.H * 0.2))
+        self.text(big, req["pin"], TEXT, center=(panel.centerx, panel.centery + h * 0.08))
+        self.text(self.f_small, "Enter this code on the device.   Back = dismiss", DIM, midbottom=(panel.centerx, panel.bottom - h * 0.07))
+
+    def shade_surface(self):
+        key = ("shade", self.W, self.H)
+        if key not in self.icons:
+            surf = pygame.Surface((self.W, self.H), pygame.SRCALPHA)
+            surf.fill((0, 0, 0, 170))
+            self.icons[key] = surf
+        return self.icons[key]
 
     def launch(self, app):
         cmd = app["command"].format_map(SafeDict(self.cfg))
@@ -813,6 +864,11 @@ class Launcher:
         sys.exit(0)
 
     def handle(self, act):
+        req = self.active_request()
+        if req:
+            if act in ("back", "ok"):
+                self.dismissed.add(req["id"])
+            return
         if self.view == "home":
             if self.power_focus:
                 if act in ("down", "back"):
@@ -990,6 +1046,7 @@ class Launcher:
             self.draw_keyboard()
         else:
             self.draw_menu()
+        self.draw_pair_popup()
         if time.time() < self.message_until:
             self.text(self.f_small, self.message, TEXT, midbottom=(self.W / 2, self.H * 0.98))
         pygame.display.flip()
@@ -999,6 +1056,7 @@ class Launcher:
         clock = pygame.time.Clock()
         while True:
             dt = clock.tick(60) / 1000
+            self.poll_companion()
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
                     return
@@ -1007,6 +1065,10 @@ class Launcher:
                 elif ev.type == pygame.KEYDOWN:
                     if ev.key == pygame.K_q and DEV and self.view != "keyboard":
                         return
+                    if self.active_request():
+                        if KEYMAP.get(ev.key) in ("back", "ok"):
+                            self.handle("back")
+                        continue
                     if self.view == "keyboard" and self.kb and self.type_key(ev):
                         continue
                     act = KEYMAP.get(ev.key)

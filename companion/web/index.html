@@ -48,9 +48,11 @@
 <header><h1>CouchPi</h1><span id="status">not connected</span></header>
 
 <div id="login">
-  <div>Enter the 4-digit PIN shown on your TV<br><span class="hint">Settings &rsaquo; Phone keyboard</span></div>
+  <div>Enter the 4-digit code now showing on your TV<br>
+    <span class="hint">It pops up on the CouchPi screen. If you're inside an app, press Home on your TV remote to get back to CouchPi.</span></div>
   <input id="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="one-time-code" placeholder="••••">
-  <button class="btn primary" id="pair">Pair</button>
+  <button class="btn primary" id="pair">Connect</button>
+  <button class="btn" id="newcode">Show a new code</button>
   <div id="err"></div>
 </div>
 
@@ -107,7 +109,7 @@ const status = $('#status');
 
 async function api(path, body) {
   const r = await fetch('/api/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
-  if (r.status === 401 && path !== 'login') { lock(); throw new Error('locked'); }
+  if (r.status === 401 && !path.startsWith('pair/')) { lock(); startPairing(); throw new Error('locked'); }
   return r.json().catch(() => ({}));
 }
 const send = (p, b) => api(p, b).catch(() => {});
@@ -117,13 +119,33 @@ function unlock() { document.body.classList.remove('locked'); status.textContent
 
 async function check() {
   const r = await fetch('/api/status');
-  if (r.ok) { const j = await r.json(); $('#pointer').checked = !!j.pointer; unlock(); } else lock();
+  if (r.ok) { const j = await r.json(); $('#pointer').checked = !!j.pointer; unlock(); }
+  else { lock(); startPairing(); }
 }
-$('#pair').onclick = async () => {
-  const j = await api('login', { pin: $('#pin').value.trim() });
-  if (j.ok) { $('#err').textContent = ''; check(); } else $('#err').textContent = j.error || 'Could not pair';
-};
-$('#pin').addEventListener('input', () => { if ($('#pin').value.length === 4) $('#pair').click(); });
+
+// Pairing: the Pi shows a fresh one-time code on the TV for this browser; the paired
+// state is a cookie that lasts until it is deleted, after which a new code is shown.
+let pairing = false;
+async function startPairing(msg) {
+  if (pairing) return;
+  pairing = true;
+  $('#err').textContent = msg || '';
+  $('#pin').value = '';
+  const j = await api('pair/request').catch(() => ({}));
+  pairing = false;
+  if (!j.ok) $('#err').textContent = j.error || "Can't reach the Pi";
+  else $('#pin').focus();
+}
+async function verify() {
+  const j = await api('pair/verify', { pin: $('#pin').value.trim() });
+  if (j.ok) { $('#err').textContent = ''; check(); return; }
+  $('#err').textContent = j.error || 'Could not connect';
+  $('#pin').value = '';
+  if (j.expired) setTimeout(() => startPairing('That code expired. A new one is showing on your TV.'), 600);
+}
+$('#pair').onclick = verify;
+$('#newcode').onclick = async () => { await api('pair/cancel'); startPairing(); };
+$('#pin').addEventListener('input', () => { if ($('#pin').value.length === 4) verify(); });
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button, section').forEach(x => x.classList.remove('on'));
