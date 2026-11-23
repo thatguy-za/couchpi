@@ -17,9 +17,10 @@ UPDATE="${COUCHPI_UPDATE:-0}"
 echo "==> Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get -o DPkg::Lock::Timeout=600 update
-apt-get -o DPkg::Lock::Timeout=600 install -y cage xwayland python3-pygame python3-evdev cec-utils sudo flatpak \
+apt-get -o DPkg::Lock::Timeout=600 install -y plymouth fonts-dejavu-core cage xwayland python3-pygame python3-evdev cec-utils sudo flatpak \
     unattended-upgrades curl ca-certificates \
     seatd bluez pipewire pipewire-pulse wireplumber libspa-0.2-bluetooth pulseaudio-utils
+apt-get -o DPkg::Lock::Timeout=600 install -y python3-qrcode >/dev/null 2>&1 || true   # QR code on the phone-keyboard screen
 command -v nmcli >/dev/null || echo "Note: NetworkManager not found; Wi-Fi settings need it (default on Pi OS Bookworm+)."
 
 echo "==> Creating the 'couchpi' user"
@@ -32,9 +33,9 @@ systemctl enable --now bluetooth.service 2>/dev/null || true
 
 echo "==> Copying files to $DEST"
 mkdir -p "$DEST/apps.d" "$CONF" /var/lib/couchpi
-cp -r "$SRC"/launcher "$SRC"/cec "$SRC"/bin "$SRC"/splash "$DEST"/
+cp -r "$SRC"/launcher "$SRC"/cec "$SRC"/bin "$SRC"/splash "$SRC"/companion "$DEST"/
 cp -r "$SRC"/apps.d/. "$DEST/apps.d/"      # your own app files in apps.d are left alone
-chmod +x "$DEST"/bin/* "$DEST"/launcher/launcher.py "$DEST"/cec/cecd.py
+chmod +x "$DEST"/companion/server.py "$DEST"/bin/* "$DEST"/launcher/launcher.py "$DEST"/cec/cecd.py
 ln -sf "$DEST/bin/couchpi-apps" /usr/local/bin/couchpi-apps
 [ -n "${COUCHPI_REPO:-}" ] && echo "$COUCHPI_REPO" > "$DEST/repo"
 [ -n "${COUCHPI_COMMIT:-}" ] && echo "$COUCHPI_COMMIT" > "$DEST/.commit"
@@ -54,13 +55,22 @@ session    required     pam_unix.so
 session    required     pam_systemd.so
 EOF
 
+# phone companion: let the unprivileged couchpi user create virtual keyboards/mice (uinput)
+echo 'KERNEL=="uinput", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput"' > /etc/udev/rules.d/99-couchpi-uinput.rules
+echo uinput > /etc/modules-load.d/couchpi.conf
+modprobe uinput 2>/dev/null || true
+udevadm control --reload-rules 2>/dev/null || true
+udevadm trigger --name-match=uinput 2>/dev/null || true
+chown couchpi:couchpi /var/lib/couchpi
+
 echo 'd /run/couchpi 0755 couchpi couchpi -' > /etc/tmpfiles.d/couchpi.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/couchpi.conf
 
 cp "$SRC"/systemd/* /etc/systemd/system/
 systemctl daemon-reload
 systemctl set-default graphical.target
-systemctl enable couchpi.service couchpi-cec.service couchpi-update.timer
+systemctl enable couchpi.service couchpi-cec.service couchpi-update.timer couchpi-companion.service
+systemctl restart couchpi-companion.service 2>/dev/null || true
 systemctl start couchpi-update.timer
 
 echo "==> Boot splash"

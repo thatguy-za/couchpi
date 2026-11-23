@@ -2,9 +2,11 @@
 # Remove CouchPi and boot back to the normal console.
 set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "Run with sudo"; exit 1; }
-systemctl disable --now couchpi.service couchpi-cec.service couchpi-update.timer 2>/dev/null || true
+systemctl disable --now couchpi.service couchpi-cec.service couchpi-update.timer couchpi-companion.service 2>/dev/null || true
 rm -f /etc/systemd/system/couchpi.service /etc/systemd/system/couchpi-cec.service \
       /etc/systemd/system/couchpi-update.service /etc/systemd/system/couchpi-update.timer \
+      /etc/systemd/system/couchpi-companion.service /etc/udev/rules.d/99-couchpi-uinput.rules \
+      /etc/modules-load.d/couchpi.conf \
       /etc/sudoers.d/couchpi /etc/pam.d/couchpi /etc/tmpfiles.d/couchpi.conf \
       /usr/local/bin/couchpi-apps
 systemctl daemon-reload

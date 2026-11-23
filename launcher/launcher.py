@@ -362,6 +362,8 @@ class Launcher:
             row("Audio", value=self.audio_label, ok=self.open_audio, hint="Output device and volume"),
             row("Bluetooth", ok=self.open_bluetooth, hint="Pair controllers, remotes and speakers"),
             row("Wi-Fi", value=self.net_label, ok=self.open_wifi, hint="Press OK to choose a network"),
+            row("Phone keyboard", value=lambda: "Type from your phone", ok=self.open_companion,
+                hint="Use your phone as a keyboard, remote and touchpad"),
             row("Device name", value=socket.gethostname, ok=self.edit_hostname, hint="Press OK to rename this device"),
             row("Updates", value=self.update_summary, ok=self.open_updates),
             row("Restart now", value=lambda: "needed" if self.reboot_pending else "", ok=self.reboot),
@@ -714,12 +716,87 @@ class Launcher:
             else:
                 kb["text"] += key.upper() if kb["shift"] and kb["layer"] == "abc" else key
 
+    def type_key(self, ev):
+        """Typing on a real keyboard (or the phone companion) fills the on-screen keyboard."""
+        if ev.key == pygame.K_BACKSPACE:
+            self.kb["text"] = self.kb["text"][:-1]
+            return True
+        if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and (ev.mod & (pygame.KMOD_SHIFT | pygame.KMOD_CTRL)):
+            self.handle_kb_done()
+            return True
+        if ev.unicode and ev.unicode.isprintable() and ev.key not in (pygame.K_SPACE,) or ev.key == pygame.K_SPACE:
+            self.kb["text"] += ev.unicode or " "
+            return True
+        return False
+
+    def handle_kb_done(self):
+        self.view = "pair" if getattr(self, "pair", None) else "menu"
+        self.kb["cb"](self.kb["text"])
+
     def kb_cancel(self):
         self.view = "menu"
         if self.kb.get("cancel"):
             self.kb["cancel"]()
 
     # ---------- actions / input ----------
+    # ---------- phone companion ----------
+    def open_companion(self):
+        self.refresh_net()
+        try:
+            with open(os.path.join(RUN_DIR, "companion.json")) as f:
+                self.comp = json.load(f)
+        except (OSError, ValueError):
+            self.comp = {}
+        self.view = "companion"
+
+    def qr_surface(self, url, size):
+        key = ("qr", url, size)
+        if key not in self.icons:
+            surf = None
+            try:
+                import qrcode
+                qr = qrcode.QRCode(border=0, box_size=1, error_correction=qrcode.constants.ERROR_CORRECT_M)
+                qr.add_data(url)
+                qr.make(fit=True)
+                m = qr.get_matrix()
+                cell = max(1, size // (len(m) + 4))
+                dim = cell * (len(m) + 4)
+                surf = pygame.Surface((dim, dim))
+                surf.fill((255, 255, 255))
+                for y, line in enumerate(m):
+                    for x, dark in enumerate(line):
+                        if dark:
+                            pygame.draw.rect(surf, (0, 0, 0), ((x + 2) * cell, (y + 2) * cell, cell, cell))
+            except Exception:  # qrcode not installed: show the address only
+                surf = None
+            self.icons[key] = surf
+        return self.icons[key]
+
+    def draw_companion(self):
+        info = getattr(self, "comp", {})
+        self.text(self.f_big, "Phone keyboard", TEXT, midtop=(self.W / 2, self.H * 0.11))
+        if not info.get("pin"):
+            self.text(self.f_mid, "The phone keyboard service isn't running.", TEXT, center=(self.W / 2, self.H * 0.45))
+            self.text(self.f_small, "Check:  sudo systemctl status couchpi-companion", DIM, center=(self.W / 2, self.H * 0.53))
+            self.text(self.f_small, "Back = return", DIM, midbottom=(self.W / 2, self.H * 0.93))
+            return
+        port = info.get("port", 8765)
+        ip = self.net.get("ip")
+        urls = [f"http://{ip}:{port}"] if ip else []
+        urls.append(f"http://{socket.gethostname()}.local:{port}")
+        x = self.W * 0.1
+        self.text(self.f_small, "1.  Join the same Wi-Fi as this Pi, then open on your phone:", DIM, topleft=(x, self.H * 0.28))
+        for i, u in enumerate(urls):
+            self.text(self.f_mid, u, TEXT, topleft=(x + self.W * 0.02, self.H * (0.35 + 0.07 * i)))
+        self.text(self.f_small, "2.  Enter this PIN when asked:", DIM, topleft=(x, self.H * 0.55))
+        big = pygame.font.Font(self.font_path_bold if hasattr(self, "font_path_bold") else None, int(self.H * 0.16))
+        self.text(big, info["pin"], TEXT, topleft=(x + self.W * 0.02, self.H * 0.61))
+        qr = self.qr_surface(urls[0], int(self.H * 0.42))
+        if qr:
+            self.screen.blit(qr, qr.get_rect(center=(self.W * 0.78, self.H * 0.5)))
+            self.text(self.f_small, "or scan", DIM, midtop=(self.W * 0.78, self.H * 0.5 + qr.get_height() / 2 + 8))
+        self.text(self.f_small, "Back = return", DIM, midbottom=(self.W / 2, self.H * 0.93))
+
     def launch(self, app):
         cmd = app["command"].format_map(SafeDict(self.cfg))
         if DEV:
@@ -727,6 +804,8 @@ class Launcher:
             self.notify(f"(dev) would launch {app['name']}")
             return
         os.makedirs(RUN_DIR, exist_ok=True)
+        with open(os.path.join(RUN_DIR, "pointer_mode"), "w") as f:
+            f.write("1" if app.get("pointer") else "0")  # remote arrows move a mouse pointer in this app
         with open(os.path.join(RUN_DIR, "launch"), "w") as f:
             f.write(cmd)
         pygame.quit()
@@ -753,6 +832,9 @@ class Launcher:
                     self.launch(item)
         elif self.view == "keyboard":
             self.handle_kb(act)
+        elif self.view == "companion":
+            if act in ("back", "ok"):
+                self.view = "menu"
         elif self.view == "pair":
             if act == "back":
                 self.pair_cancel()
@@ -899,6 +981,8 @@ class Launcher:
         self.draw_header()
         if self.view == "home":
             self.draw_home(dt)
+        elif self.view == "companion":
+            self.draw_companion()
         elif self.view == "pair":
             self.draw_pair()
         elif self.view == "keyboard":
@@ -922,6 +1006,8 @@ class Launcher:
                 elif ev.type == pygame.KEYDOWN:
                     if ev.key == pygame.K_q and DEV and self.view != "keyboard":
                         return
+                    if self.view == "keyboard" and self.kb and self.type_key(ev):
+                        continue
                     act = KEYMAP.get(ev.key)
                     if act:
                         self.handle(act)

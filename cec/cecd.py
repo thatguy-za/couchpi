@@ -4,6 +4,9 @@
 - Turns TV-remote button presses (libcec's cec-client) into virtual keyboard
   events via uinput, so the remote works in the launcher AND inside apps.
 - The Home/"root menu" button kills the running app (back to the launcher).
+- Pointer mode: the remote's arrows move a mouse pointer and OK clicks (for apps like
+  Chiaki-ng that expect a mouse). Switched on per app (apps.d "pointer = true"), from the
+  phone companion, or with the config key "cec_pointer_key" (default: the yellow button).
 - Watches TV power: when the TV goes to standby, applies the configured sleep
   behaviour (stop app + low-power CPU, optionally shut down after a delay).
 """
@@ -18,6 +21,9 @@ import threading
 import time
 
 from evdev import UInput, ecodes as e
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pointer import Pointer  # noqa: E402
 
 CFG_PATH = os.environ.get("COUCHPI_CONFIG", "/etc/couchpi/config.json")
 RUN_DIR = os.environ.get("COUCHPI_RUN", "/run/couchpi")
@@ -36,6 +42,37 @@ KEY_RE = re.compile(r"key (pressed|released): (.+?) \(\w+\)")
 proc = None
 tv_state = "unknown"
 ui = UInput({e.EV_KEY: sorted(set(KEYS.values()))}, name="couchpi-cec")
+mouse = UInput({e.EV_REL: [e.REL_X, e.REL_Y], e.EV_KEY: [e.BTN_LEFT]}, name="couchpi-cec-pointer")
+POINTER_FILE = os.path.join(RUN_DIR, "pointer_mode")
+
+
+def _move(dx, dy):
+    if dx:
+        mouse.write(e.EV_REL, e.REL_X, dx)
+    if dy:
+        mouse.write(e.EV_REL, e.REL_Y, dy)
+    mouse.syn()
+
+
+pointer = Pointer(_move)
+
+
+def pointer_active():
+    try:
+        with open(POINTER_FILE) as f:
+            return f.read().strip() == "1"
+    except OSError:
+        return False
+
+
+def set_pointer(on):
+    try:
+        with open(POINTER_FILE, "w") as f:
+            f.write("1" if on else "0")
+    except OSError:
+        pass
+    if not on:
+        pointer.clear()
 
 
 def cfg():
@@ -84,9 +121,20 @@ def handle_line(line):
     m = KEY_RE.search(line)
     if m and cfg().get("cec_enabled", True):
         name = m.group(2).strip().lower()
+        pressed = m.group(1) == "pressed"
+        if name == str(cfg().get("cec_pointer_key", "F4 (yellow)")).lower():
+            if pressed:
+                set_pointer(not pointer_active())
+            return
+        if pointer_active() and name in ("up", "down", "left", "right"):
+            (pointer.press if pressed else pointer.release)(name)
+            return
+        if pointer_active() and name == "select":
+            mouse.write(e.EV_KEY, e.BTN_LEFT, 1 if pressed else 0)
+            mouse.syn()
+            return
         code = KEYS.get(name)
         if code is not None:
-            pressed = m.group(1) == "pressed"
             ui.write(e.EV_KEY, code, 1 if pressed else 0)
             ui.syn()
             if pressed and name == "root menu":

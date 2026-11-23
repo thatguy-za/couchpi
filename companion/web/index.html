@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0e1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="CouchPi">
+<title>CouchPi</title>
+<style>
+  :root { --bg:#0b0e1a; --panel:#161a2e; --panel2:#1e2340; --text:#eef0fa; --dim:#8c93b0; --accent:#6d7ff0; --danger:#e5484d; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overscroll-behavior:none; }
+  body { display:flex; flex-direction:column; padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom); max-width:560px; margin:0 auto; }
+  header { display:flex; align-items:center; justify-content:space-between; padding:14px 0 10px; }
+  header h1 { font-size:20px; margin:0; }
+  #status { font-size:13px; color:var(--dim); }
+  nav { display:flex; gap:8px; margin-bottom:12px; }
+  nav button { flex:1; padding:12px 0; border:0; border-radius:12px; background:var(--panel); color:var(--dim); font:inherit; font-weight:600; }
+  nav button.on { background:var(--accent); color:#fff; }
+  main { flex:1; min-height:0; display:flex; flex-direction:column; gap:12px; padding-bottom:12px; }
+  section { display:none; flex-direction:column; gap:12px; flex:1; min-height:0; }
+  section.on { display:flex; }
+  textarea { width:100%; min-height:140px; border:0; border-radius:14px; padding:14px; background:var(--panel); color:var(--text); font:inherit; resize:vertical; }
+  textarea:focus { outline:2px solid var(--accent); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .row > * { flex:1; }
+  button.btn { padding:14px 10px; border:0; border-radius:12px; background:var(--panel2); color:var(--text); font:inherit; font-weight:600; touch-action:manipulation; user-select:none; -webkit-user-select:none; }
+  button.btn:active { background:var(--accent); }
+  button.primary { background:var(--accent); color:#fff; }
+  button.danger { background:var(--danger); color:#fff; }
+  label.switch { display:flex; align-items:center; gap:10px; color:var(--dim); }
+  .hint { color:var(--dim); font-size:13px; }
+  .dpad { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; max-width:340px; width:100%; margin:6px auto; }
+  .dpad .btn { aspect-ratio:1; font-size:26px; padding:0; }
+  .dpad .ok { background:var(--accent); color:#fff; }
+  #pad { flex:1; min-height:220px; border-radius:16px; background:var(--panel); position:relative; touch-action:none; display:flex; align-items:center; justify-content:center; color:var(--dim); padding:0 72px 0 16px; text-align:center; }
+  #scroll { position:absolute; right:0; top:0; bottom:0; width:56px; border-left:1px solid var(--panel2); display:flex; align-items:center; justify-content:center; font-size:12px; writing-mode:vertical-rl; }
+  #login { display:none; flex:1; flex-direction:column; justify-content:center; gap:14px; }
+  #login input { font:inherit; font-size:32px; letter-spacing:12px; text-align:center; padding:14px; border:0; border-radius:14px; background:var(--panel); color:var(--text); }
+  #err { color:var(--danger); min-height:1.4em; }
+  body.locked nav, body.locked main { display:none; }
+  body.locked #login { display:flex; }
+</style>
+</head>
+<body class="locked">
+<header><h1>CouchPi</h1><span id="status">not connected</span></header>
+
+<div id="login">
+  <div>Enter the 4-digit PIN shown on your TV<br><span class="hint">Settings &rsaquo; Phone keyboard</span></div>
+  <input id="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="one-time-code" placeholder="••••">
+  <button class="btn primary" id="pair">Pair</button>
+  <div id="err"></div>
+</div>
+
+<nav>
+  <button data-tab="kb" class="on">Keyboard</button>
+  <button data-tab="remote">Remote</button>
+  <button data-tab="padtab">Touchpad</button>
+</nav>
+
+<main>
+  <section id="kb" class="on">
+    <textarea id="t" placeholder="Type or paste here, then tap Send" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
+    <div class="row">
+      <button class="btn primary" id="send">Send</button>
+      <button class="btn" id="sendEnter">Send + Enter</button>
+      <button class="btn" id="clear">Clear</button>
+    </div>
+    <label class="switch"><input type="checkbox" id="live"> Live typing (send every key as you type)</label>
+    <div class="row">
+      <button class="btn" data-key="backspace">&#9003;</button>
+      <button class="btn" data-key="tab">Tab</button>
+      <button class="btn" data-key="esc">Esc</button>
+      <button class="btn" data-key="enter">Enter</button>
+    </div>
+    <div class="hint" id="note">Sends plain US-keyboard characters to whatever is selected on the TV. Emoji and accented letters can't be typed.</div>
+  </section>
+
+  <section id="remote">
+    <div class="dpad">
+      <span></span><button class="btn" data-hold="up">&#9650;</button><span></span>
+      <button class="btn" data-hold="left">&#9664;</button><button class="btn ok" data-key="enter">OK</button><button class="btn" data-hold="right">&#9654;</button>
+      <span></span><button class="btn" data-hold="down">&#9660;</button><span></span>
+    </div>
+    <div class="row">
+      <button class="btn" data-key="esc">Back</button>
+      <button class="btn danger" id="home">Close app</button>
+      <button class="btn" data-key="playpause">Play/Pause</button>
+    </div>
+    <label class="switch"><input type="checkbox" id="pointer"> Pointer mode for the TV remote (arrows move the mouse, OK clicks)</label>
+  </section>
+
+  <section id="padtab">
+    <div id="pad"><span>Drag to move &middot; tap to click &middot; two-finger tap = right click</span><div id="scroll">scroll</div></div>
+    <div class="row">
+      <button class="btn" id="lclick">Left click</button>
+      <button class="btn" id="rclick">Right click</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const status = $('#status');
+
+async function api(path, body) {
+  const r = await fetch('/api/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  if (r.status === 401 && path !== 'login') { lock(); throw new Error('locked'); }
+  return r.json().catch(() => ({}));
+}
+const send = (p, b) => api(p, b).catch(() => {});
+
+function lock() { document.body.classList.add('locked'); status.textContent = 'not paired'; }
+function unlock() { document.body.classList.remove('locked'); status.textContent = 'connected'; }
+
+async function check() {
+  const r = await fetch('/api/status');
+  if (r.ok) { const j = await r.json(); $('#pointer').checked = !!j.pointer; unlock(); } else lock();
+}
+$('#pair').onclick = async () => {
+  const j = await api('login', { pin: $('#pin').value.trim() });
+  if (j.ok) { $('#err').textContent = ''; check(); } else $('#err').textContent = j.error || 'Could not pair';
+};
+$('#pin').addEventListener('input', () => { if ($('#pin').value.length === 4) $('#pair').click(); });
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button, section').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); $('#' + b.dataset.tab).classList.add('on');
+});
+
+// ---- keyboard ----
+async function typeText(text, enter) {
+  if (!text && !enter) return;
+  const j = await api('text', { text }).catch(() => ({}));
+  if (enter) await send('key', { name: 'enter' });
+  $('#note').textContent = j.skipped ? `${j.skipped} character(s) can't be typed (not on a US keyboard) and were skipped.` : 'Sent.';
+}
+$('#send').onclick = () => { typeText($('#t').value, false); };
+$('#sendEnter').onclick = () => { typeText($('#t').value, true); $('#t').value = ''; };
+$('#clear').onclick = () => { $('#t').value = ''; $('#t').focus(); };
+document.querySelectorAll('[data-key]').forEach(b => b.onclick = () => send('key', { name: b.dataset.key }));
+
+$('#t').addEventListener('beforeinput', e => {
+  if (!$('#live').checked) return;
+  e.preventDefault();
+  if (e.inputType === 'deleteContentBackward') send('key', { name: 'backspace' });
+  else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') send('key', { name: 'enter' });
+  else if (e.inputType === 'insertFromPaste') { const t = (e.dataTransfer && e.dataTransfer.getData('text')) || ''; if (t) send('text', { text: t }); }
+  else if (e.data) send('text', { text: e.data });
+});
+
+// ---- remote (hold an arrow to repeat) ----
+document.querySelectorAll('[data-hold]').forEach(b => {
+  let timer = null;
+  const fire = () => send('key', { name: b.dataset.hold });
+  const stop = () => { clearInterval(timer); timer = null; };
+  b.addEventListener('pointerdown', e => { e.preventDefault(); fire(); timer = setInterval(fire, 140); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => b.addEventListener(ev, stop));
+});
+$('#home').onclick = () => send('home');
+$('#pointer').onchange = e => send('pointer', { on: e.target.checked });
+
+// ---- touchpad ----
+(() => {
+  const area = document.querySelector('div#pad');
+  let last = null, moved = 0, t0 = 0, fingers = 0, accX = 0, accY = 0, scrollY = null, scrolling = false;
+  const GAIN = 2.2;
+  const flush = () => {
+    const dx = Math.round(accX), dy = Math.round(accY);
+    if (dx || dy) { accX -= dx; accY -= dy; send('move', { dx, dy }); }
+  };
+  setInterval(flush, 16);
+  area.addEventListener('touchstart', e => {
+    e.preventDefault();
+    fingers = Math.max(fingers, e.touches.length);
+    const t = e.touches[0], r = area.getBoundingClientRect();
+    scrolling = t.clientX > r.right - 56;
+    last = { x: t.clientX, y: t.clientY }; scrollY = t.clientY;
+    if (e.touches.length === 1) { moved = 0; t0 = Date.now(); fingers = 1; }
+    else fingers = 2;
+  }, { passive: false });
+  area.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if (scrolling) { const d = Math.round((scrollY - t.clientY) / 12); if (d) { send('scroll', { dy: d }); scrollY = t.clientY; } return; }
+    moved += Math.abs(t.clientX - last.x) + Math.abs(t.clientY - last.y);
+    accX += (t.clientX - last.x) * GAIN; accY += (t.clientY - last.y) * GAIN;
+    last = { x: t.clientX, y: t.clientY };
+  }, { passive: false });
+  area.addEventListener('touchend', e => {
+    if (e.touches.length) return;
+    if (!scrolling && moved < 10 && Date.now() - t0 < 250) send('click', { button: fingers > 1 ? 'right' : 'left' });
+    fingers = 0; scrolling = false;
+  });
+})();
+$('#lclick').onclick = () => send('click', { button: 'left' });
+$('#rclick').onclick = () => send('click', { button: 'right' });
+
+check();
+setInterval(() => { if (!document.body.classList.contains('locked')) check(); }, 15000);
+</script>
+</body>
+</html>

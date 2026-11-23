@@ -51,6 +51,7 @@ while true; do
         *)                export SDL_VIDEODRIVER="$drv" ;;
     esac
     rm -f "$RUN/launch"
+    echo 0 > "$RUN/pointer_mode"   # remote pointer mode is per app; off in the launcher
     if [ "$drv" = kmsdrm ]; then
         echo "couchpi-session: kmsdrm device index: ${SDL_KMSDRM_DEVICE_INDEX:-auto}"
         run_direct python3 "$LAUNCHER"

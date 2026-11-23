@@ -52,6 +52,30 @@ animation (a Plymouth theme). The installer turns it on; it appears from the nex
 To switch it off or on again: `sudo couchpi-splash disable` / `sudo couchpi-splash enable`
 (backups of `cmdline.txt` and `config.txt` are kept next to them as `*.couchpi-bak`).
 
+## Phone keyboard, remote and touchpad
+
+Settings > **Phone keyboard** shows an address, a QR code and a 4-digit PIN. On a phone on the
+same Wi-Fi, open the address (or scan the code), enter the PIN once, and you get:
+
+- **Keyboard:** type or paste into the box and tap Send; the Pi types it into whatever is
+  selected on the TV (Wi-Fi passwords, Chiaki-ng's Account ID and PIN fields, sign-ins). A "live
+  typing" switch sends each key as you type it. Plain US-keyboard characters only; emoji and
+  accented letters are skipped (the page tells you).
+- **Remote:** arrows, OK, Back, Play/Pause, and **Close app**.
+- **Touchpad:** drag to move the mouse, tap to click, two-finger tap to right-click, a scroll strip.
+
+Works on Android and iOS in the browser; "Add to Home Screen" makes it feel like an app. It only
+answers to phones that know the PIN (five wrong tries lock it for a minute) and is meant for
+your home network. It runs as the unprivileged `couchpi` user (`couchpi-companion.service`).
+
+## Remote pointer mode
+
+Some apps, like Chiaki-ng's menus, want a mouse. In **pointer mode** the TV remote's arrows move
+the mouse pointer (hold to speed up) and OK clicks. It switches on automatically for apps with
+`pointer = true` in their TOML (Chiaki-ng has it), and you can toggle it any time with the
+remote's **yellow** button (change it with `"cec_pointer_key"` in `/etc/couchpi/config.json`,
+e.g. `"F2 (red)"`) or from the phone Remote tab.
+
 ## Adding apps
 
 An app is one TOML file in `/opt/couchpi/apps.d/`:
