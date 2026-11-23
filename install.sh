@@ -43,7 +43,7 @@ chown -R couchpi:couchpi "$CONF"
 
 echo "==> Permissions and services"
 cat > /etc/sudoers.d/couchpi <<EOF
-couchpi ALL=(root) NOPASSWD: $DEST/bin/apply-display *, $DEST/bin/couchpi-sys *, $DEST/bin/couchpi-update *, /usr/bin/systemctl reboot
+couchpi ALL=(root) NOPASSWD: $DEST/bin/apply-display *, $DEST/bin/couchpi-sys *, $DEST/bin/couchpi-update *, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff
 EOF
 chmod 440 /etc/sudoers.d/couchpi
 

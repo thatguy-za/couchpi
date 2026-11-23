@@ -22,6 +22,8 @@ Prefer to read it first? Clone the repo and run `sudo ./install.sh`.
 
 - **Remote:** arrows + OK to navigate, Back/Exit to go back, **Home** (root menu) quits the
   running app and returns to the launcher.
+- **Power:** press Up from the app row to reach the power button (top right), then OK for
+  Shut down / Restart / Cancel. It starts on Cancel so a stray OK does nothing.
 - **Settings**
   - *Display:* output resolution (applied after a restart).
   - *TV off:* do nothing, go idle (stop the app, CPU to power-save), or shut down after a delay.

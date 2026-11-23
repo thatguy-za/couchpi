@@ -158,6 +158,7 @@ class Launcher:
         self.items = self.apps + [{"name": "Settings", "description": "Display, network, updates and more",
                                    "color": "#4b5563", "glyph": "gear", "_builtin": "settings"}]
         self.sel, self.anim = 0, 0.0
+        self.power_focus = False
         self.view = "home"           # home | menu | keyboard
         self.menu, self.stack, self.kb = None, [], None
         self.reboot_pending = False
@@ -223,6 +224,14 @@ class Launcher:
                     pts.append((m + r * math.cos(a + da), m + r * math.sin(a + da)))
             pygame.draw.polygon(surf, c, pts)
             pygame.draw.circle(surf, (0, 0, 0, 0), (m, m), int(s * 0.14))
+        elif name == "power":
+            w, r = max(3, s // 14), s * 0.34
+            pts = [(m + r * math.cos(math.radians(-55 + 290 * k / 48)),
+                    m + r * math.sin(math.radians(-55 + 290 * k / 48))) for k in range(49)]
+            pygame.draw.lines(surf, c, False, pts, w)
+            for pt in (pts[0], pts[-1], (m, m - s * 0.4)):
+                pygame.draw.circle(surf, c, pt, w // 2)
+            pygame.draw.line(surf, c, (m, m - s * 0.4), (m, m - s * 0.05), w)
         else:
             return None
         return pygame.transform.smoothscale(surf, (size, size))
@@ -369,10 +378,22 @@ class Launcher:
             self.notify("Could not change resolution")
 
     def reboot(self):
-        self.notify("Restarting...")
+        self.power("reboot")
+
+    def power(self, what):
+        self.notify("Shutting down..." if what == "poweroff" else "Restarting...", 60)
         if DEV:
+            print("POWER:", what)
             return
-        subprocess.Popen(["sudo", "-n", "/usr/bin/systemctl", "reboot"])
+        subprocess.Popen(["sudo", "-n", "/usr/bin/systemctl", what])
+
+    def open_power_menu(self):
+        rows = [row("Shut down", ok=lambda: self.power("poweroff")),
+                row("Restart", ok=lambda: self.power("reboot")),
+                row("Cancel", ok=self.back)]
+        self.power_focus = False
+        self.open_menu("Power", rows, "power")
+        self.menu["sel"] = 2  # start on Cancel so a stray OK press does nothing
 
     # ---------- audio ----------
     def audio_label(self):
@@ -713,7 +734,14 @@ class Launcher:
 
     def handle(self, act):
         if self.view == "home":
-            if act == "left":
+            if self.power_focus:
+                if act in ("down", "back"):
+                    self.power_focus = False
+                elif act == "ok":
+                    self.open_power_menu()
+            elif act == "up":
+                self.power_focus = True
+            elif act == "left":
                 self.sel = max(0, self.sel - 1)
             elif act == "right":
                 self.sel = min(len(self.items) - 1, self.sel + 1)
@@ -752,7 +780,20 @@ class Launcher:
     # ---------- drawing ----------
     def draw_header(self):
         self.text(self.f_mid, "CouchPi", TEXT, topleft=(self.W * 0.05, self.H * 0.05))
-        self.text(self.f_mid, time.strftime("%H:%M"), DIM, topright=(self.W * 0.95, self.H * 0.05))
+        right = self.W * 0.95
+        if self.view == "home":
+            d = int(self.H * 0.07)
+            cx, cy = int(right - d / 2), int(self.H * 0.08)
+            if self.power_focus:
+                pygame.draw.circle(self.screen, (70, 80, 130), (cx, cy), d // 2 + 6)
+                pygame.draw.circle(self.screen, (235, 238, 250), (cx, cy), d // 2 + 6, 3)
+            icon = self.icon_for({"glyph": "power"}, int(d * 0.7))
+            icon.set_alpha(255 if self.power_focus else 140)
+            self.screen.blit(icon, icon.get_rect(center=(cx, cy)))
+            if self.power_focus:
+                self.text(self.f_small, "Power", TEXT, midtop=(cx, cy + d // 2 + 12))
+            right = cx - d // 2 - self.W * 0.02
+        self.text(self.f_mid, time.strftime("%H:%M"), DIM, topright=(right, self.H * 0.05))
 
     def draw_home(self, dt):
         self.anim += (self.sel - self.anim) * min(1.0, dt * 10)
@@ -771,7 +812,7 @@ class Launcher:
             rect.center = (cx, cy)
             base = pygame.Color(item.get("color", "#374151"))
             col = mix((base.r, base.g, base.b), (40, 44, 60), 0.55 * (1 - focus))
-            if focus > 0.5:
+            if focus > 0.5 and not self.power_focus:
                 glow = rect.inflate(int(w * 0.04), int(w * 0.04))
                 pygame.draw.rect(self.screen, (235, 238, 250), glow, 3, border_radius=int(h * 0.12))
             pygame.draw.rect(self.screen, col, rect, border_radius=int(h * 0.1))
