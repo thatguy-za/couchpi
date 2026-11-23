@@ -54,8 +54,10 @@ To switch it off or on again: `sudo couchpi-splash disable` / `sudo couchpi-spla
 
 ## Phone keyboard, remote and touchpad
 
-Settings > **Phone keyboard** shows an address (just `http://couchpi.local`, port 80), a QR code and
-a 4-digit PIN. On a phone on the same Wi-Fi, open the address (or scan the code), enter the PIN once, and you get:
+Settings > **Phone keyboard** shows an address (just `http://couchpi.local`, port 80) and a QR code.
+On a phone or tablet on the same Wi-Fi, open the address (or scan the code). A **4-digit code pops up on
+the TV** (while the CouchPi launcher is on screen; press Home on the remote if you're inside an app).
+Type it on the phone and you're connected, with:
 
 - **Keyboard:** type or paste into the box and tap Send; the Pi types it into whatever is
   selected on the TV (Wi-Fi passwords, Chiaki-ng's Account ID and PIN fields, sign-ins). A "live
@@ -64,9 +66,14 @@ a 4-digit PIN. On a phone on the same Wi-Fi, open the address (or scan the code)
 - **Remote:** arrows, OK, Back, Play/Pause, and **Close app**.
 - **Touchpad:** drag to move the mouse, tap to click, two-finger tap to right-click, a scroll strip.
 
-Works on Android and iOS in the browser; "Add to Home Screen" makes it feel like an app. It only
-answers to phones that know the PIN (five wrong tries lock it for a minute) and is meant for
-your home network. It runs as the unprivileged `couchpi` user (`couchpi-companion.service`).
+Works on Android and iOS in the browser; "Add to Home Screen" makes it feel like an app.
+
+How pairing works: every new browser gets its own random one-time code, valid for 5 minutes, with 3
+guesses (then it needs a new code). Once paired, the browser keeps a cookie and stays connected
+until that cookie is deleted, after which it is shown a new code. Ten wrong guesses in ten minutes
+lock pairing for five minutes. **Settings > Sign out phones** disconnects every phone at once. It
+runs over plain HTTP on your home network, as the unprivileged `couchpi` user
+(`couchpi-companion.service`), so don't expose it to the internet.
 
 ## Remote pointer mode
 
