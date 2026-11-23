@@ -136,8 +136,9 @@ def main():
             time.sleep(10)
             continue
         try:
+            # log level 20 = notice + debug: key presses are logged at debug level
             proc = subprocess.Popen(
-                ["cec-client", "-d", "20", "-t", "p", "-o", "CouchPi"]  # 20 = notice + debug: key presses are debug-level,
+                ["cec-client", "-d", "20", "-t", "p", "-o", "CouchPi"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, bufsize=1)
         except OSError as ex:
